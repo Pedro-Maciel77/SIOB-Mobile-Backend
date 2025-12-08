@@ -11,7 +11,10 @@
     "forceConsistentCasingInFileNames": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "strictPropertyInitialization": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
