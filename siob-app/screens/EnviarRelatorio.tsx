@@ -7,290 +7,341 @@ import {
   Image,
   Platform,
   TouchableOpacity,
-  Animated,
   Dimensions,
   SafeAreaView,
   Modal,
   FlatList,
   ActivityIndicator,
 } from 'react-native';
-import { Text, TextInput, Button, Card, Divider, IconButton } from 'react-native-paper';
+import { Text, TextInput, Button, Card, Divider, IconButton, Menu } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { darkTheme } from '../theme/darkTheme';
 import AnimatedDrawer from '../components/AnimatedDrawer';
-import { Ionicons } from '@expo/vector-icons';
+import { occurrenceService, CreateOccurrenceData } from '../services/occurrenceService';
+import { statsService } from '../services/statsService';
 
 const { width, height } = Dimensions.get('window');
 
-interface LocationData {
-  latitude?: number;
-  longitude?: number;
-  address?: string | null;
-}
-
-// Tipos de ocorrência disponíveis
+// Tipos de ocorrência baseados na sua entidade
 const TIPOS_OCORRENCIA = [
-  { id: 1, nome: 'Acidente' },
-  { id: 2, nome: 'Incêndio' },
-  { id: 3, nome: 'Resgate' },
-  { id: 4, nome: 'Desastre Natural' },
-  { id: 5, nome: 'Emergência Médica' },
+  { id: 'acidente', nome: 'Acidente', color: '#29B6F6' },
+  { id: 'resgate', nome: 'Resgate', color: '#FFB74D' },
+  { id: 'incendio', nome: 'Incêndio', color: '#EF5350' },
+  { id: 'atropelamento', nome: 'Atropelamento', color: '#9C27B0' },
+  { id: 'outros', nome: 'Outros', color: '#4CAF50' },
 ];
 
-// Status da ocorrência
+// Status baseados na sua entidade
 const STATUS_OCORRENCIA = [
-  { id: 1, nome: 'Aberta', cor: '#FFA726' },
-  { id: 2, nome: 'Em Andamento', cor: '#29B6F6' },
-  { id: 3, nome: 'Fechada', cor: '#66BB6A' },
-  { id: 4, nome: 'Cancelada', cor: '#EF5350' },
+  { id: 'aberto', nome: 'Aberto', cor: '#FFA726' },
+  { id: 'em_andamento', nome: 'Em Andamento', cor: '#29B6F6' },
+  { id: 'finalizado', nome: 'Finalizado', cor: '#66BB6A' },
+  { id: 'alerta', nome: 'Alerta', cor: '#EF5350' },
 ];
 
-export default function EnviarRelatorio({ navigation }: any) {
+export default function EnviarRelatorio({ navigation, route }: any) {
   const drawerRef = useRef<any>(null);
 
-  // Estados do formulário (municipio e bairro removidos)
-  const [nomeVitima, setNomeVitima] = useState('');
-  const [viatura, setViatura] = useState('');
-  const [contatoVitima, setContatoVitima] = useState('');
-  const [descricao, setDescricao] = useState('');
+  // Estados do formulário
+  const [loading, setLoading] = useState(false);
+  const [municipios, setMunicipios] = useState<Array<{id: number; name: string}>>([]);
+  const [viaturas, setViaturas] = useState<Array<{id: string; plate: string; name: string}>>([]);
+  
+  // Dados principais
+  const [tipoOcorrencia, setTipoOcorrencia] = useState<string>('acidente');
+  const [status, setStatus] = useState<string>('aberto');
+  const [municipio, setMunicipio] = useState<string>('');
+  const [bairro, setBairro] = useState<string>('');
+  const [endereco, setEndereco] = useState<string>('');
+  const [descricao, setDescricao] = useState<string>('');
+  const [nomeVitima, setNomeVitima] = useState<string>('');
+  const [contatoVitima, setContatoVitima] = useState<string>('');
+  const [viaturaId, setViaturaId] = useState<string>('');
+  const [numeroViatura, setNumeroViatura] = useState<string>('');
 
-  // Seleções
-  const [tipoOcorrencia, setTipoOcorrencia] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  // Datas
+  const [dataOcorrencia, setDataOcorrencia] = useState(new Date());
+  const [dataAtivacao, setDataAtivacao] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [pickingOccurrenceDate, setPickingOccurrenceDate] = useState(true);
 
-  // Datas e horário
-  const [dataSelecionada, setDataSelecionada] = useState(new Date());
-  const [horaSelecionada, setHoraSelecionada] = useState(new Date());
-  const [mostrarDatePicker, setMostrarDatePicker] = useState(false);
-  const [mostrarTimePicker, setMostrarTimePicker] = useState(false);
-
-  // Imagens / localização
-  const [fotoOcorrencia, setFotoOcorrencia] = useState<string | null>(null);
-  const [imagensAnexadas, setImagensAnexadas] = useState<string[]>([]);
-  const [localizacao, setLocalizacao] = useState<LocationData | null>(null);
-  const [endereco, setEndereco] = useState<string | null>(null);
+  // Localização
+  const [localizacao, setLocalizacao] = useState<{
+    latitude?: number;
+    longitude?: number;
+    address?: string;
+  } | null>(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
-  const [hasMediaPermission, setHasMediaPermission] = useState(false);
-  const [loadingAddress, setLoadingAddress] = useState(false);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+
+  // Imagens
+  const [imagens, setImagens] = useState<string[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   // Modais
-  const [modalTipoVisible, setModalTipoVisible] = useState(false);
-  const [modalStatusVisible, setModalStatusVisible] = useState(false);
+  const [menuMunicipioVisible, setMenuMunicipioVisible] = useState(false);
+  const [menuViaturaVisible, setMenuViaturaVisible] = useState(false);
 
-  // Solicitar permissões e obter localização inicial (opcional)
+  // Carregar dados iniciais
   useEffect(() => {
-    (async () => {
-      try {
-        const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
-        setHasLocationPermission(locationStatus === 'granted');
-
-        const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        setHasMediaPermission(mediaStatus === 'granted');
-
-        if (locationStatus === 'granted') {
-          const location = await Location.getCurrentPositionAsync({});
-          const coords = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          };
-          // tentar preencher endereço inicial
-          setLocalizacao({ ...coords, address: null });
-          try {
-            const addresses = await Location.reverseGeocodeAsync(coords);
-            if (addresses && addresses.length > 0) {
-              const addr = buildAddressString(addresses[0]);
-              setEndereco(addr);
-              setLocalizacao({ ...coords, address: addr });
-            }
-          } catch (e) {
-            console.warn('Reverse geocode inicial falhou', e);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    })();
+    carregarDadosIniciais();
+    solicitarPermissoes();
   }, []);
 
-  // Helper para formar string de endereço a partir do objeto do expo-location
-  const buildAddressString = (addr: Location.LocationGeocodedAddress): string => {
-    const parts = [
-      addr.name,
-      addr.street,
-      addr.subregion || addr.city,
-      addr.region,
-      addr.postalCode,
-      addr.country,
-    ].filter(Boolean);
-    return parts.join(', ');
+  const carregarDadosIniciais = async () => {
+    try {
+      // Carrega municípios do backend
+      const municipiosData = await occurrenceService.getMunicipalities();
+      setMunicipios(municipiosData);
+
+      // Carrega viaturas
+      const viaturasData = await occurrenceService.getVehicles();
+      setViaturas(viaturasData);
+
+      // Tenta preencher com o primeiro município se disponível
+      if (municipiosData.length > 0) {
+        setMunicipio(municipiosData[0].name);
+      }
+
+    } catch (error) {
+      console.warn('Erro ao carregar dados iniciais:', error);
+    }
   };
 
-  // Formatação de data/hora
+  const solicitarPermissoes = async () => {
+    try {
+      const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
+      setHasLocationPermission(locationStatus === 'granted');
+
+      const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (mediaStatus !== 'granted') {
+        Alert.alert('Permissão necessária', 'Precisa de permissão para acessar fotos.');
+      }
+    } catch (error) {
+      console.error('Erro ao solicitar permissões:', error);
+    }
+  };
+
+  // Formatação
   const formatarData = (date: Date) => {
-    const dia = date.getDate().toString().padStart(2, '0');
-    const mes = (date.getMonth() + 1).toString().padStart(2, '0');
-    const ano = date.getFullYear();
-    return `${dia}/${mes}/${ano}`;
+    return date.toLocaleDateString('pt-BR');
   };
 
   const formatarHora = (date: Date) => {
-    const horas = date.getHours().toString().padStart(2, '0');
-    const minutos = date.getMinutes().toString().padStart(2, '0');
-    return `${horas}:${minutos}`;
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Seleções diversas
-  const selecionarTipoOcorrencia = (tipo: string) => {
-    setTipoOcorrencia(tipo);
-    setModalTipoVisible(false);
-  };
+  // Localização
+  const obterLocalizacaoAtual = async () => {
+    if (!hasLocationPermission) {
+      Alert.alert('Permissão necessária', 'Ative a permissão de localização nas configurações.');
+      return;
+    }
 
-  const selecionarStatus = (status: string) => {
-    setStatus(status);
-    setModalStatusVisible(false);
+    try {
+      setLoadingLocation(true);
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High
+      });
+
+      const coords = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude
+      };
+
+      setLocalizacao(coords);
+
+      // Tenta obter endereço
+      try {
+        const addresses = await Location.reverseGeocodeAsync(coords);
+        if (addresses.length > 0) {
+          const addr = addresses[0];
+          const enderecoCompleto = [
+            addr.street,
+            addr.district,
+            addr.city,
+            addr.region
+          ].filter(Boolean).join(', ');
+
+          setEndereco(enderecoCompleto);
+          
+          // Tenta preencher município automaticamente
+          if (addr.city) {
+            setMunicipio(addr.city);
+          }
+          if (addr.district) {
+            setBairro(addr.district);
+          }
+        }
+      } catch (geocodeError) {
+        console.warn('Erro no geocoding:', geocodeError);
+      }
+
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível obter a localização.');
+      console.error('Erro na localização:', error);
+    } finally {
+      setLoadingLocation(false);
+    }
   };
 
   // Imagens
-  const selecionarFoto = async () => {
-    if (!hasMediaPermission) {
-      Alert.alert('Permissão necessária', 'Precisa conceder permissão para acessar a galeria');
-      return;
-    }
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets[0].uri) {
-        setFotoOcorrencia(result.assets[0].uri);
-      }
-    } catch (error) {
-      Alert.alert('Erro', 'Não foi possível selecionar a imagem');
-      console.error(error);
-    }
-  };
-
-  const anexarImagem = async () => {
-    if (!hasMediaPermission) {
-      Alert.alert('Permissão necessária', 'Precisa conceder permissão para acessar a galeria');
-      return;
-    }
+  const selecionarImagens = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
-        selectionLimit: 5,
         quality: 0.8,
+        selectionLimit: 10,
       });
+
       if (!result.canceled && result.assets) {
-        const novasImagens = result.assets.map((asset) => asset.uri);
-        setImagensAnexadas([...imagensAnexadas, ...novasImagens]);
+        const novasImagens = result.assets.map(asset => asset.uri);
+        setImagens(prev => [...prev, ...novasImagens]);
       }
     } catch (error) {
-      Alert.alert('Erro', 'Não foi possível selecionar as imagens');
-      console.error(error);
+      Alert.alert('Erro', 'Não foi possível selecionar as imagens.');
     }
   };
 
-  // Obter localização atual e preencher endereço automaticamente
-  const preencherEnderecoComMinhaLocalizacao = async () => {
-    if (!hasLocationPermission) {
-      Alert.alert('Permissão necessária', 'Ative permissão de localização nas configurações');
-      return;
-    }
-    try {
-      setLoadingAddress(true);
-      const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      const coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
-      try {
-        const addresses = await Location.reverseGeocodeAsync(coords);
-        if (addresses && addresses.length > 0) {
-          const addr = buildAddressString(addresses[0]);
-          setEndereco(addr);
-          setLocalizacao({ ...coords, address: addr });
-        } else {
-          setEndereco('');
-          setLocalizacao({ ...coords, address: null });
-        }
-      } catch (e) {
-        console.warn('Reverse geocode falhou', e);
-        setEndereco('');
-        setLocalizacao({ ...coords, address: null });
-      } finally {
-        setLoadingAddress(false);
-      }
-    } catch (err) {
-      setLoadingAddress(false);
-      Alert.alert('Erro', 'Não foi possível obter sua localização agora');
-      console.error(err);
-    }
-  };
-
-  // Remover imagem anexada
   const removerImagem = (index: number) => {
-    const novasImagens = [...imagensAnexadas];
-    novasImagens.splice(index, 1);
-    setImagensAnexadas(novasImagens);
+    setImagens(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Enviar relatório (validação sem municipio/bairro)
-  const enviarRelatorio = async () => {
-    if (!nomeVitima || !tipoOcorrencia || !status) {
-      Alert.alert('Atenção', 'Preencha todos os campos obrigatórios (*)');
-      return;
+  // Envio
+  const validarFormulario = (): boolean => {
+    const camposObrigatorios = [
+      { valor: tipoOcorrencia, campo: 'Tipo de ocorrência' },
+      { valor: municipio, campo: 'Município' },
+      { valor: endereco, campo: 'Endereço' },
+      { valor: descricao, campo: 'Descrição' },
+    ];
+
+    const camposFaltando = camposObrigatorios
+      .filter(campo => !campo.valor)
+      .map(campo => campo.campo);
+
+    if (camposFaltando.length > 0) {
+      Alert.alert(
+        'Campos obrigatórios',
+        `Preencha os seguintes campos:\n${camposFaltando.join('\n')}`
+      );
+      return false;
     }
 
-    const relatorioData = {
-      nomeVitima,
-      tipoOcorrencia,
-      dataOcorrencia: formatarData(dataSelecionada),
-      horaOcorrencia: formatarHora(horaSelecionada),
-      viatura,
-      status,
-      contatoVitima,
-      descricao,
-      fotoOcorrencia,
-      imagensAnexadas,
-      localizacao: {
+    return true;
+  };
+
+  const enviarOcorrencia = async () => {
+    if (!validarFormulario()) return;
+
+    setLoading(true);
+
+    try {
+      // Prepara os dados para a API
+      const ocorrenciaData: CreateOccurrenceData = {
+        type: tipoOcorrencia as any,
+        municipality: municipio,
+        neighborhood: bairro || undefined,
+        address: endereco,
         latitude: localizacao?.latitude,
         longitude: localizacao?.longitude,
-        address: endereco || localizacao?.address || null,
-      },
-      dataEnvio: new Date().toISOString(),
-    };
+        occurrenceDate: dataOcorrencia.toISOString(),
+        activationDate: dataAtivacao.toISOString(),
+        status: status as any,
+        victimName: nomeVitima || undefined,
+        victimContact: contatoVitima || undefined,
+        vehicleNumber: numeroViatura || undefined,
+        description: descricao,
+        vehicleId: viaturaId || undefined,
+      };
 
-    console.log('Dados do relatório:', relatorioData);
+      console.log('📤 Enviando ocorrência:', ocorrenciaData);
 
-    Alert.alert('Sucesso', 'Relatório enviado com sucesso!');
-    navigation.goBack();
+      // 1. Cria a ocorrência
+      const ocorrenciaCriada = await occurrenceService.createOccurrence(ocorrenciaData);
+
+      // 2. Upload de imagens (se houver)
+      if (imagens.length > 0) {
+        setUploadingImages(true);
+        
+        for (const imagemUri of imagens) {
+          try {
+            await occurrenceService.uploadImage(ocorrenciaCriada.id, imagemUri);
+          } catch (uploadError) {
+            console.warn('Erro ao fazer upload de imagem:', uploadError);
+            // Continua mesmo se uma imagem falhar
+          }
+        }
+        
+        setUploadingImages(false);
+      }
+
+      // 3. Atualiza estatísticas no dashboard
+      await statsService.getDashboardStats();
+
+      // 4. Feedback de sucesso
+      Alert.alert(
+        'Sucesso!',
+        'Ocorrência registrada com sucesso.',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack()
+          }
+        ]
+      );
+
+    } catch (error: any) {
+      console.error('❌ Erro ao enviar ocorrência:', error);
+      
+      let mensagemErro = 'Erro ao enviar ocorrência. Tente novamente.';
+      
+      if (error.response?.status === 400) {
+        mensagemErro = error.response.data?.message || 'Dados inválidos. Verifique os campos.';
+      } else if (error.response?.status === 401) {
+        mensagemErro = 'Sessão expirada. Faça login novamente.';
+        // Opcional: redirecionar para login
+      } else if (error.message) {
+        mensagemErro = error.message;
+      }
+
+      Alert.alert('Erro', mensagemErro);
+      
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Render item tipo/status
-  const renderTipoItem = ({ item }: any) => (
-    <TouchableOpacity style={[styles.tipoItem, tipoOcorrencia === item.nome && { backgroundColor: darkTheme.colors.primary + '20' }]} onPress={() => selecionarTipoOcorrencia(item.nome)}>
-      <Text style={[styles.tipoItemText, { color: tipoOcorrencia === item.nome ? darkTheme.colors.primary : darkTheme.colors.onSurface }]}>{item.nome}</Text>
-      {tipoOcorrencia === item.nome && <IconButton icon="check" size={20} iconColor={darkTheme.colors.primary} />}
-    </TouchableOpacity>
+  // Render
+  const renderMunicipioItem = ({ item }: any) => (
+    <Menu.Item
+      title={item.name}
+      onPress={() => {
+        setMunicipio(item.name);
+        setMenuMunicipioVisible(false);
+      }}
+    />
   );
 
-  const renderStatusItem = ({ item }: any) => (
-    <TouchableOpacity style={[styles.statusItem, status === item.nome && { backgroundColor: item.cor + '20' }]} onPress={() => selecionarStatus(item.nome)}>
-      <View style={[styles.statusDot, { backgroundColor: item.cor }]} />
-      <Text style={[styles.statusItemText, { color: status === item.nome ? darkTheme.colors.onSurface : darkTheme.colors.onSurfaceVariant }]}>{item.nome}</Text>
-      {status === item.nome && <IconButton icon="check" size={20} iconColor={item.cor} />}
-    </TouchableOpacity>
+  const renderViaturaItem = ({ item }: any) => (
+    <Menu.Item
+      title={`${item.plate} - ${item.name}`}
+      onPress={() => {
+        setViaturaId(item.id);
+        setMenuViaturaVisible(false);
+      }}
+    />
   );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
-      {/* Drawer reutilizável */}
       <AnimatedDrawer ref={drawerRef} />
 
-      {/* Header com hambúrguer */}
+      {/* Header */}
       <View style={[styles.header, { backgroundColor: darkTheme.colors.surface }]}>
         <TouchableOpacity onPress={() => drawerRef.current?.toggle?.()} style={styles.menuButton}>
           <View style={styles.hamburgerIcon}>
@@ -300,254 +351,360 @@ export default function EnviarRelatorio({ navigation }: any) {
           </View>
         </TouchableOpacity>
 
-        <Text style={[styles.headerTitle, { color: darkTheme.colors.onSurface }]}>Enviar relatório</Text>
+        <Text style={[styles.headerTitle, { color: darkTheme.colors.onSurface }]}>
+          Nova Ocorrência
+        </Text>
 
         <View style={styles.headerRightPlaceholder} />
       </View>
 
-      <ScrollView style={[styles.container, { backgroundColor: darkTheme.colors.background }]} showsVerticalScrollIndicator={false}>
-        <Card style={[styles.cardSection, { backgroundColor: darkTheme.colors.surface }]}>
-          <Card.Content style={styles.cardContent}>
-            {/* Data da ocorrência (agora ocupa a linha superior) */}
-            <View style={{ marginBottom: 8 }}>
-              <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Data da ocorrência</Text>
-              <TouchableOpacity style={[styles.selectButton, { borderColor: darkTheme.colors.outline }]} onPress={() => setMostrarDatePicker(true)}>
-                <Text style={[styles.selectButtonText, { color: darkTheme.colors.onSurface }]}>📅 {formatarData(dataSelecionada)}</Text>
-                <IconButton icon="calendar" size={20} iconColor={darkTheme.colors.primary} />
-              </TouchableOpacity>
-            </View>
-
+      <ScrollView style={[styles.container, { backgroundColor: darkTheme.colors.background }]}>
+        <Card style={[styles.card, { backgroundColor: darkTheme.colors.surface }]}>
+          <Card.Content>
+            {/* Tipo e Status */}
             <View style={styles.row}>
               <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Tipo</Text>
-                <TouchableOpacity style={[styles.selectButton, { borderColor: tipoOcorrencia ? darkTheme.colors.primary : darkTheme.colors.outline }]} onPress={() => setModalTipoVisible(true)}>
-                  <Text style={[styles.selectButtonText, { color: tipoOcorrencia ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant }]}>{tipoOcorrencia || 'Selecione o tipo de ocorrência'}</Text>
-                  <IconButton icon="chevron-down" size={20} iconColor={tipoOcorrencia ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant} />
-                </TouchableOpacity>
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Tipo *
+                </Text>
+                <View style={styles.tipoContainer}>
+                  {TIPOS_OCORRENCIA.map((tipo) => (
+                    <TouchableOpacity
+                      key={tipo.id}
+                      style={[
+                        styles.tipoButton,
+                        tipoOcorrencia === tipo.id && {
+                          backgroundColor: tipo.color,
+                          borderColor: tipo.color
+                        }
+                      ]}
+                      onPress={() => setTipoOcorrencia(tipo.id)}
+                    >
+                      <Text style={[
+                        styles.tipoButtonText,
+                        tipoOcorrencia === tipo.id ? { color: '#fff' } : { color: tipo.color }
+                      ]}>
+                        {tipo.nome}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
 
               <View style={{ width: 140 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Status</Text>
-                <TouchableOpacity style={[styles.selectButton, { borderColor: status ? darkTheme.colors.primary : darkTheme.colors.outline }]} onPress={() => setModalStatusVisible(true)}>
-                  <Text style={[styles.selectButtonText, { color: status ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant }]}>{status || 'Selecione o status'}</Text>
-                  <IconButton icon="chevron-down" size={20} iconColor={status ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant} />
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Status *
+                </Text>
+                <Menu
+                  visible={false} // Usaremos botão customizado
+                  anchor={
+                    <TouchableOpacity
+                      style={[styles.selectButton, { borderColor: darkTheme.colors.outline }]}
+                      onPress={() => {}} // Para menu customizado
+                    >
+                      <Text style={{ color: darkTheme.colors.onSurface }}>
+                        {STATUS_OCORRENCIA.find(s => s.id === status)?.nome || 'Selecionar'}
+                      </Text>
+                    </TouchableOpacity>
+                  }
+                >
+                  {STATUS_OCORRENCIA.map((statusItem) => (
+                    <Menu.Item
+                      key={statusItem.id}
+                      title={statusItem.nome}
+                      onPress={() => setStatus(statusItem.id)}
+                    />
+                  ))}
+                </Menu>
+              </View>
+            </View>
+
+            {/* Localização */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Localização
+            </Text>
+
+            {/* Município */}
+            <Text style={[styles.label, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>
+              Município *
+            </Text>
+            <Menu
+              visible={menuMunicipioVisible}
+              onDismiss={() => setMenuMunicipioVisible(false)}
+              anchor={
+                <TouchableOpacity
+                  style={[styles.selectButton, { 
+                    borderColor: municipio ? darkTheme.colors.primary : darkTheme.colors.outline 
+                  }]}
+                  onPress={() => setMenuMunicipioVisible(true)}
+                >
+                  <Text style={{ 
+                    color: municipio ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant 
+                  }}>
+                    {municipio || 'Selecionar município'}
+                  </Text>
+                  <IconButton icon="chevron-down" size={20} />
+                </TouchableOpacity>
+              }
+            >
+              {municipios.map((mun) => (
+                <Menu.Item
+                  key={mun.id}
+                  title={mun.name}
+                  onPress={() => {
+                    setMunicipio(mun.name);
+                    setMenuMunicipioVisible(false);
+                  }}
+                />
+              ))}
+              {municipios.length === 0 && (
+                <Menu.Item title="Carregando..." disabled />
+              )}
+            </Menu>
+
+            {/* Bairro */}
+            <Text style={[styles.label, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>
+              Bairro
+            </Text>
+            <TextInput
+              mode="outlined"
+              placeholder="Digite o bairro"
+              value={bairro}
+              onChangeText={setBairro}
+              style={styles.input}
+              theme={darkTheme}
+            />
+
+            {/* Endereço */}
+            <Text style={[styles.label, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>
+              Endereço *
+            </Text>
+            <TextInput
+              mode="outlined"
+              placeholder="Digite o endereço completo"
+              value={endereco}
+              onChangeText={setEndereco}
+              style={styles.input}
+              theme={darkTheme}
+            />
+
+            {/* Botão de localização */}
+            <Button
+              mode="outlined"
+              icon="crosshairs-gps"
+              onPress={obterLocalizacaoAtual}
+              loading={loadingLocation}
+              disabled={loadingLocation}
+              style={{ marginTop: 8 }}
+            >
+              Usar minha localização
+            </Button>
+
+            {/* Datas */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Datas e Horários
+            </Text>
+
+            <View style={styles.row}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Data da Ocorrência
+                </Text>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => {
+                    setPickingOccurrenceDate(true);
+                    setShowDatePicker(true);
+                  }}
+                >
+                  <Text>{formatarData(dataOcorrencia)}</Text>
+                  <IconButton icon="calendar" size={20} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Data de Ativação
+                </Text>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => {
+                    setPickingOccurrenceDate(false);
+                    setShowDatePicker(true);
+                  }}
+                >
+                  <Text>{formatarData(dataAtivacao)}</Text>
+                  <IconButton icon="calendar" size={20} />
                 </TouchableOpacity>
               </View>
             </View>
 
+            {/* Informações da Vítima */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Informações da Vítima
+            </Text>
+
             <View style={styles.row}>
               <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Nome da vítima *</Text>
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Nome
+                </Text>
                 <TextInput
                   mode="outlined"
-                  placeholder="Digite o nome da vítima"
+                  placeholder="Nome da vítima"
                   value={nomeVitima}
                   onChangeText={setNomeVitima}
                   style={styles.input}
                   theme={darkTheme}
-                  outlineColor={darkTheme.colors.outline}
-                  activeOutlineColor={darkTheme.colors.primary}
-                  placeholderTextColor={darkTheme.colors.onSurfaceVariant}
                 />
               </View>
 
-              <View style={{ width: 140 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Viatura</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.label, { color: darkTheme.colors.onSurface }]}>
+                  Contato
+                </Text>
                 <TextInput
                   mode="outlined"
-                  placeholder="Digite o número"
-                  value={viatura}
-                  onChangeText={setViatura}
-                  style={styles.input}
-                  theme={darkTheme}
-                  outlineColor={darkTheme.colors.outline}
-                  activeOutlineColor={darkTheme.colors.primary}
-                  placeholderTextColor={darkTheme.colors.onSurfaceVariant}
-                />
-              </View>
-            </View>
-
-            <View style={styles.row}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Contato da vítima</Text>
-                <TextInput
-                  mode="outlined"
-                  placeholder="Digite o contato"
+                  placeholder="Telefone"
                   value={contatoVitima}
                   onChangeText={setContatoVitima}
                   style={styles.input}
                   theme={darkTheme}
-                  outlineColor={darkTheme.colors.outline}
-                  activeOutlineColor={darkTheme.colors.primary}
-                  placeholderTextColor={darkTheme.colors.onSurfaceVariant}
                   keyboardType="phone-pad"
                 />
               </View>
-
-              <View style={{ width: 140 }}>
-                <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface }]}>Horário</Text>
-                <TouchableOpacity style={[styles.selectButton, { borderColor: darkTheme.colors.outline }]} onPress={() => setMostrarTimePicker(true)}>
-                  <Text style={[styles.selectButtonText, { color: darkTheme.colors.onSurface }]}>⏰ {formatarHora(horaSelecionada)}</Text>
-                  <IconButton icon="clock" size={20} iconColor={darkTheme.colors.primary} />
-                </TouchableOpacity>
-              </View>
             </View>
 
-            {/* Imagens */}
-            <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>Imagens</Text>
-            <Button
-              mode="outlined"
-              icon={fotoOcorrencia ? 'check' : 'camera'}
-              style={[styles.outlinedButton, { borderColor: darkTheme.colors.primary }]}
-              contentStyle={styles.buttonContent}
-              labelStyle={[styles.buttonLabel, { color: darkTheme.colors.primary }]}
-              theme={darkTheme}
-              onPress={selecionarFoto}
+            {/* Viatura */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Viatura
+            </Text>
+
+            <Menu
+              visible={menuViaturaVisible}
+              onDismiss={() => setMenuViaturaVisible(false)}
+              anchor={
+                <TouchableOpacity
+                  style={[styles.selectButton, { 
+                    borderColor: viaturaId ? darkTheme.colors.primary : darkTheme.colors.outline 
+                  }]}
+                  onPress={() => setMenuViaturaVisible(true)}
+                >
+                  <Text style={{ 
+                    color: viaturaId ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant 
+                  }}>
+                    {viaturaId 
+                      ? viaturas.find(v => v.id === viaturaId)?.plate || 'Selecionada'
+                      : 'Selecionar viatura'}
+                  </Text>
+                  <IconButton icon="chevron-down" size={20} />
+                </TouchableOpacity>
+              }
             >
-              {fotoOcorrencia ? 'Foto selecionada' : 'Enviar imagens da ocorrência'}
-            </Button>
-
-            <Button
-              mode="outlined"
-              icon="image"
-              style={[styles.outlinedButton, { borderColor: darkTheme.colors.primary }]}
-              contentStyle={styles.buttonContent}
-              labelStyle={[styles.buttonLabel, { color: darkTheme.colors.primary }]}
-              theme={darkTheme}
-              onPress={anexarImagem}
-            >
-              Anexar outras imagens ({imagensAnexadas.length})
-            </Button>
-
-            {/* Endereço (campo único) */}
-            <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>Endereço</Text>
-
-            {loadingAddress ? (
-              <ActivityIndicator color={darkTheme.colors.primary} />
-            ) : (
-              <>
-                <TextInput
-                  mode="outlined"
-                  label="Endereço"
-                  placeholder="Digite o endereço ou use 'Usar minha localização'"
-                  value={endereco || ''}
-                  onChangeText={(text) => {
-                    setEndereco(text);
-                    setLocalizacao((prev) => (prev ? { ...prev, address: text } : { address: text }));
+              {viaturas.map((viatura) => (
+                <Menu.Item
+                  key={viatura.id}
+                  title={`${viatura.plate} - ${viatura.name}`}
+                  onPress={() => {
+                    setViaturaId(viatura.id);
+                    setMenuViaturaVisible(false);
                   }}
-                  style={styles.addressInput}
-                  theme={darkTheme}
-                  outlineColor={darkTheme.colors.outline}
-                  activeOutlineColor={darkTheme.colors.primary}
-                  placeholderTextColor={darkTheme.colors.onSurfaceVariant}
                 />
+              ))}
+              <Menu.Item
+                title="Nenhuma viatura"
+                onPress={() => {
+                  setViaturaId('');
+                  setMenuViaturaVisible(false);
+                }}
+              />
+            </Menu>
 
-                <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                  <Button
-                    mode="outlined"
-                    icon="crosshairs-gps"
-                    onPress={preencherEnderecoComMinhaLocalizacao}
-                    style={[styles.mapButton, { borderColor: darkTheme.colors.primary }]}
-                    labelStyle={{ color: darkTheme.colors.primary }}
-                  >
-                    Usar minha localização
-                  </Button>
-
-                  <View style={{ width: 8 }} />
-
-                  <Button
-                    mode="text"
-                    onPress={() => {
-                      setEndereco('');
-                      setLocalizacao(null);
-                    }}
-                    labelStyle={{ color: darkTheme.colors.onSurfaceVariant }}
-                  >
-                    Limpar
-                  </Button>
-                </View>
-              </>
-            )}
-
-            <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface, marginTop: 12 }]}>Descrição do relatório</Text>
             <TextInput
               mode="outlined"
-              placeholder="Digite a descrição aqui"
+              placeholder="Número da viatura (opcional)"
+              value={numeroViatura}
+              onChangeText={setNumeroViatura}
+              style={[styles.input, { marginTop: 8 }]}
+              theme={darkTheme}
+            />
+
+            {/* Descrição */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Descrição *
+            </Text>
+            <TextInput
+              mode="outlined"
+              placeholder="Descreva detalhadamente a ocorrência"
               value={descricao}
               onChangeText={setDescricao}
               multiline
               numberOfLines={6}
-              style={styles.textAreaLarge}
+              style={styles.textArea}
               theme={darkTheme}
-              outlineColor={darkTheme.colors.outline}
-              activeOutlineColor={darkTheme.colors.primary}
-              placeholderTextColor={darkTheme.colors.onSurfaceVariant}
             />
 
-            <View style={{ height: 10 }} />
+            {/* Imagens */}
+            <Text style={[styles.sectionTitle, { color: darkTheme.colors.onSurface, marginTop: 16 }]}>
+              Imagens ({imagens.length})
+            </Text>
+            
+            <Button
+              mode="outlined"
+              icon="image"
+              onPress={selecionarImagens}
+              style={{ marginTop: 8 }}
+            >
+              Adicionar Imagens
+            </Button>
 
+            {imagens.length > 0 && (
+              <View style={styles.imagesContainer}>
+                {imagens.map((uri, index) => (
+                  <View key={index} style={styles.imageItem}>
+                    <Image source={{ uri }} style={styles.imagePreview} />
+                    <IconButton
+                      icon="close"
+                      size={16}
+                      onPress={() => removerImagem(index)}
+                      style={styles.removeImageButton}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Botão Enviar */}
             <Button
               mode="contained"
-              onPress={enviarRelatorio}
-              style={[styles.primaryButton, { backgroundColor: darkTheme.colors.primary }]}
-              contentStyle={styles.primaryButtonContent}
-              theme={darkTheme}
-              disabled={!nomeVitima || !tipoOcorrencia || !status}
+              onPress={enviarOcorrencia}
+              loading={loading || uploadingImages}
+              disabled={loading || uploadingImages}
+              style={{ marginTop: 24, backgroundColor: darkTheme.colors.primary }}
             >
-              Enviar relatório
+              {loading ? 'Enviando...' : uploadingImages ? 'Enviando imagens...' : 'Registrar Ocorrência'}
             </Button>
           </Card.Content>
         </Card>
 
-        <View style={styles.spacing} />
+        <View style={{ height: 20 }} />
       </ScrollView>
 
-      {/* Modais de seleção tipo/status */}
-      <Modal visible={modalTipoVisible} animationType="slide" transparent onRequestClose={() => setModalTipoVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: darkTheme.colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>Selecione o Tipo de Ocorrência</Text>
-              <IconButton icon="close" size={24} onPress={() => setModalTipoVisible(false)} iconColor={darkTheme.colors.onSurface} />
-            </View>
-            <FlatList data={TIPOS_OCORRENCIA} renderItem={renderTipoItem} keyExtractor={(item) => item.id.toString()} style={styles.modalList} />
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={modalStatusVisible} animationType="slide" transparent onRequestClose={() => setModalStatusVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: darkTheme.colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>Selecione o Status</Text>
-              <IconButton icon="close" size={24} onPress={() => setModalStatusVisible(false)} iconColor={darkTheme.colors.onSurface} />
-            </View>
-            <FlatList data={STATUS_OCORRENCIA} renderItem={renderStatusItem} keyExtractor={(item) => item.id.toString()} style={styles.modalList} />
-          </View>
-        </View>
-      </Modal>
-
-      {/* Pickers */}
-      {mostrarDatePicker && (
+      {/* Date Picker */}
+      {showDatePicker && (
         <DateTimePicker
-          value={dataSelecionada}
+          value={pickingOccurrenceDate ? dataOcorrencia : dataAtivacao}
           mode="date"
-          display="spinner"
+          display="default"
           onChange={(event, selectedDate) => {
-            setMostrarDatePicker(false);
-            if (selectedDate) setDataSelecionada(selectedDate);
-          }}
-        />
-      )}
-
-      {mostrarTimePicker && (
-        <DateTimePicker
-          value={horaSelecionada}
-          mode="time"
-          display="spinner"
-          onChange={(event, selectedTime) => {
-            setMostrarTimePicker(false);
-            if (selectedTime) setHoraSelecionada(selectedTime);
+            setShowDatePicker(false);
+            if (selectedDate) {
+              if (pickingOccurrenceDate) {
+                setDataOcorrencia(selectedDate);
+              } else {
+                setDataAtivacao(selectedDate);
+              }
+            }
           }}
         />
       )}
@@ -556,13 +713,18 @@ export default function EnviarRelatorio({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  // header
+  container: {
+    flex: 1,
+    padding: 16,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
   menuButton: {
     padding: 8,
@@ -579,54 +741,45 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '600',
   },
-  headerRightPlaceholder: { width: 40 },
-
-  container: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 12,
+  headerRightPlaceholder: {
+    width: 40,
   },
-  cardSection: {
-    marginBottom: 16,
-    borderRadius: 8,
+  card: {
+    borderRadius: 12,
     elevation: 0,
   },
-  cardContent: {
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-  },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '600',
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  subTitle: {
-    fontSize: 13,
+  label: {
+    fontSize: 14,
     fontWeight: '500',
-    marginTop: 8,
+    marginBottom: 4,
   },
-  input: {
-    fontSize: 14,
-    backgroundColor: 'transparent',
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  textAreaLarge: {
-    fontSize: 14,
-    textAlignVertical: 'top',
-    minHeight: 100,
-    backgroundColor: 'transparent',
+  tipoContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  outlinedButton: {
+  tipoButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
     borderWidth: 1,
-    borderRadius: 6,
-    marginVertical: 6,
+    borderColor: '#444',
   },
-  buttonContent: {
-    paddingVertical: 8,
-  },
-  buttonLabel: {
-    fontSize: 14,
+  tipoButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   selectButton: {
     flexDirection: 'row',
@@ -636,82 +789,35 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 6,
-    backgroundColor: 'transparent',
+    borderColor: '#444',
   },
-
-  // Adições pedidas (evita erro)
-  selectButtonText: {
+  input: {
     fontSize: 14,
-    flex: 1,
   },
-  mapButton: {
-    marginVertical: 4,
-    borderRadius: 6,
+  textArea: {
+    fontSize: 14,
+    minHeight: 100,
+    textAlignVertical: 'top',
   },
-
-  addressInput: {
-    marginBottom: 6,
-  },
-
-  // modais
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: height * 0.6,
-  },
-  modalHeader: {
+  imagesContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  modalList: {
-    paddingHorizontal: 12,
-  },
-
-  // seleção
-  tipoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  tipoItemText: { fontSize: 16 },
-  statusItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  statusItemText: { fontSize: 16, marginLeft: 12 },
-  statusDot: { width: 10, height: 10, borderRadius: 5 },
-
-  row: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
-  spacing: { height: 40 },
-
-  // botões
-  primaryButton: {
+    flexWrap: 'wrap',
     marginTop: 12,
+    gap: 8,
+  },
+  imageItem: {
+    position: 'relative',
+  },
+  imagePreview: {
+    width: 80,
+    height: 80,
     borderRadius: 8,
   },
-  primaryButtonContent: {
-    paddingVertical: 10,
+  removeImageButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
   },
 });

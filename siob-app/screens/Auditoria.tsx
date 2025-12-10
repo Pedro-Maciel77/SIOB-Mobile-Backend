@@ -1,356 +1,347 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Animated,
   Dimensions,
   SafeAreaView,
   TextInput,
   FlatList,
+  RefreshControl,
+  Alert,
 } from 'react-native';
-import { Text, Card, Divider, IconButton, Button } from 'react-native-paper';
+import { Text, Card, Divider, IconButton, Button, ActivityIndicator } from 'react-native-paper';
 import { darkTheme } from '../theme/darkTheme';
+import AnimatedDrawer from '../components/AnimatedDrawer';
+import api from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
-// Dados da auditoria
-const LOGS_AUDITORIA = [
-  { 
-    id: 99, 
-    name: 'Eduardo Borges', 
-    evento: 'Abertura de ocorrência', 
-    data: '09/10/26',
-    tipo: 'Criação',
-    detalhes: 'Nova ocorrência registrada no sistema'
-  },
-  { 
-    id: 56, 
-    name: 'José Pereira', 
-    evento: 'Registro de atendimento', 
-    data: '04/11/25',
-    tipo: 'Atualização',
-    detalhes: 'Atualização de status da ocorrência'
-  },
-  { 
-    id: 73, 
-    name: 'João Lima', 
-    evento: 'Usuário criado', 
-    data: '01/11/25',
-    tipo: 'Criação',
-    detalhes: 'Novo usuário cadastrado no sistema'
-  },
-  { 
-    id: 16, 
-    name: 'Cláudia Pereira', 
-    evento: 'Remoção de usuário', 
-    data: '20/05/25',
-    tipo: 'Exclusão',
-    detalhes: 'Usuário removido do sistema'
-  },
-  { 
-    id: 42, 
-    name: 'Mariana Silva', 
-    evento: 'Atualização de perfil', 
-    data: '15/04/25',
-    tipo: 'Atualização',
-    detalhes: 'Perfil de usuário atualizado'
-  },
-  { 
-    id: 88, 
-    name: 'Carlos Santos', 
-    evento: 'Relatório gerado', 
-    data: '10/03/25',
-    tipo: 'Consulta',
-    detalhes: 'Relatório de estatísticas exportado'
-  },
-  { 
-    id: 31, 
-    name: 'Ana Oliveira', 
-    evento: 'Login no sistema', 
-    data: '28/02/25',
-    tipo: 'Autenticação',
-    detalhes: 'Acesso realizado com sucesso'
-  },
-  { 
-    id: 64, 
-    name: 'Roberto Alves', 
-    evento: 'Alteração de senha', 
-    data: '12/01/25',
-    tipo: 'Segurança',
-    detalhes: 'Senha do usuário alterada'
-  },
+// Tipos baseados na sua entidade AuditLog
+interface AuditLog {
+  id: string;
+  action: 'login' | 'logout' | 'create' | 'update' | 'delete' | 'download';
+  entity: 'user' | 'occurrence' | 'report' | 'vehicle';
+  entityId?: string;
+  details?: Record<string, any>;
+  createdAt: string;
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+}
+
+// Tipos para filtros
+interface AuditFilters {
+  page?: number;
+  limit?: number;
+  search?: string;
+  action?: string;
+  entity?: string;
+  startDate?: string;
+  endDate?: string;
+  userId?: string;
+}
+
+// Atualize as constantes de ações e entidades
+const ACTIONS = [
+  { value: 'all', label: 'Todos' },
+  { value: 'login', label: 'Login' },
+  { value: 'logout', label: 'Logout' },
+  { value: 'create', label: 'Criação' },
+  { value: 'update', label: 'Atualização' },
+  { value: 'delete', label: 'Exclusão' },
+  { value: 'download', label: 'Download' },
+  // Adicione outras ações que seu backend suporta
 ];
 
-// Tipos de evento para filtro
-const TIPOS_EVENTO = [
-  'Todos',
-  'Criação',
-  'Atualização',
-  'Exclusão',
-  'Consulta',
-  'Autenticação',
-  'Segurança'
+const ENTITIES = [
+  { value: 'all', label: 'Todos' },
+  { value: 'user', label: 'Usuário' },
+  { value: 'occurrence', label: 'Ocorrência' },
+  { value: 'report', label: 'Relatório' },
+  { value: 'vehicle', label: 'Veículo' },
+  // Adicione outras entidades que seu backend suporta
 ];
 
 export default function AuditoriaLogs({ navigation }: any) {
-  const [drawerVisible, setDrawerVisible] = useState(false);
-  const slideAnim = useState(new Animated.Value(-width * 0.7))[0];
-  const overlayAnim = useState(new Animated.Value(0))[0];
+  const drawerRef = useRef<any>(null);
   
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [logsFiltrados, setLogsFiltrados] = useState<AuditLog[]>([]);
+  const [filtros, setFiltros] = useState<AuditFilters>({});
+  
+  // Filtros de UI
   const [filtroUsuario, setFiltroUsuario] = useState('');
   const [filtroEvento, setFiltroEvento] = useState('');
-  const [filtroData, setFiltroData] = useState('');
-  const [tipoSelecionado, setTipoSelecionado] = useState('Todos');
-  const [logsFiltrados, setLogsFiltrados] = useState(LOGS_AUDITORIA);
+  const [filtroDataInicio, setFiltroDataInicio] = useState('');
+  const [filtroDataFim, setFiltroDataFim] = useState('');
+  const [acaoSelecionada, setAcaoSelecionada] = useState('all');
+  const [entidadeSelecionada, setEntidadeSelecionada] = useState('all');
 
-  // Função para abrir/fechar o drawer
-  const toggleDrawer = () => {
-    if (drawerVisible) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: -width * 0.7,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start(() => setDrawerVisible(false));
-    } else {
-      setDrawerVisible(true);
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 0.5,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
+  // screens/Auditoria.tsx - Atualizar a função carregarLogs
+const carregarLogs = useCallback(async () => {
+  try {
+    setLoading(true);
+    const token = await AsyncStorage.getItem('@SIOB:token');
+    
+    // Construir URL e parâmetros corretamente
+    let url = '/audit/logs';
+    const params: any = {};
+    
+    // Adicionar filtros se aplicável
+    if (acaoSelecionada !== 'all') {
+      params.action = acaoSelecionada;
     }
-  };
+    
+    if (entidadeSelecionada !== 'all') {
+      params.entity = entidadeSelecionada;
+    }
+    
+    if (filtroUsuario.trim() !== '') {
+      params.search = filtroUsuario;
+    }
+    
+    if (filtroDataInicio) {
+      // Converter formato DD/MM/AAAA para ISO se necessário
+      params.startDate = filtroDataInicio;
+    }
+    
+    if (filtroDataFim) {
+      params.endDate = filtroDataFim;
+    }
+
+    console.log('Buscando logs em:', url, 'com params:', params);
+
+    const response = await api.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      params,
+    });
+
+    console.log('Resposta da API:', response.data);
+
+    // Ajustar conforme a estrutura da sua resposta
+    const logsData = response.data.data || response.data || [];
+    setLogs(logsData);
+    setLogsFiltrados(logsData);
+    
+  } catch (error: any) {
+    console.error('Erro ao carregar logs de auditoria:', error);
+    console.log('Status:', error.response?.status);
+    console.log('Dados do erro:', error.response?.data);
+    console.log('URL:', error.config?.url);
+    
+    Alert.alert(
+      'Erro', 
+      error.response?.data?.message || 'Não foi possível carregar os logs de auditoria'
+    );
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}, [acaoSelecionada, entidadeSelecionada, filtroUsuario, filtroDataInicio, filtroDataFim]);
 
   // Função para aplicar filtros
   const aplicarFiltros = () => {
-    let filtrados = LOGS_AUDITORIA;
-
-    // Filtro por tipo
-    if (tipoSelecionado !== 'Todos') {
-      filtrados = filtrados.filter(log => log.tipo === tipoSelecionado);
-    }
-
-    // Filtro por usuário
-    if (filtroUsuario.trim() !== '') {
-      filtrados = filtrados.filter(log => 
-        log.name.toLowerCase().includes(filtroUsuario.toLowerCase())
-      );
-    }
-
-    // Filtro por evento
-    if (filtroEvento.trim() !== '') {
-      filtrados = filtrados.filter(log => 
-        log.evento.toLowerCase().includes(filtroEvento.toLowerCase())
-      );
-    }
-
-    // Filtro por data
-    if (filtroData.trim() !== '') {
-      filtrados = filtrados.filter(log => 
-        log.data.includes(filtroData)
-      );
-    }
-
-    setLogsFiltrados(filtrados);
+    carregarLogs();
   };
 
   // Função para limpar filtros
   const limparFiltros = () => {
     setFiltroUsuario('');
     setFiltroEvento('');
-    setFiltroData('');
-    setTipoSelecionado('Todos');
-    setLogsFiltrados(LOGS_AUDITORIA);
+    setFiltroDataInicio('');
+    setFiltroDataFim('');
+    setAcaoSelecionada('all');
+    setEntidadeSelecionada('all');
+    // Recarregar com filtros limpos
+    setTimeout(() => carregarLogs(), 100);
+  };
+
+  // Função para exportar logs
+  const exportarLogs = async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem('@SIOB:token');
+      
+      const response = await api.get('/audit-logs/export', {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'blob',
+      });
+
+      // Aqui você precisaria implementar a lógica para baixar o arquivo
+      // Dependendo da implementação do backend
+      Alert.alert('Sucesso', 'Logs exportados com sucesso!');
+      
+    } catch (error: any) {
+      console.error('Erro ao exportar logs:', error);
+      Alert.alert('Erro', 'Não foi possível exportar os logs');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Renderizar item da tabela
-  const renderLogItem = ({ item }: any) => (
-    <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.id}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.name}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.evento}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.data}
-        </Text>
-      </View>
-    </View>
-  );
+  const renderLogItem = ({ item }: { item: AuditLog }) => {
+    const getActionColor = (action: string) => {
+      switch (action) {
+        case 'create': return '#4CAF50';
+        case 'update': return '#2196F3';
+        case 'delete': return '#F44336';
+        case 'login': return '#9C27B0';
+        case 'logout': return '#FF9800';
+        case 'download': return '#795548';
+        default: return '#757575';
+      }
+    };
 
-  // Renderizar tipo de filtro
-  const renderTipoFiltro = ({ item }: any) => (
+    const getActionLabel = (action: string) => {
+      const actionMap: Record<string, string> = {
+        'create': 'Criação',
+        'update': 'Atualização',
+        'delete': 'Exclusão',
+        'login': 'Login',
+        'logout': 'Logout',
+        'download': 'Download',
+      };
+      return actionMap[action] || action;
+    };
+
+    const getEntityLabel = (entity: string) => {
+      const entityMap: Record<string, string> = {
+        'user': 'Usuário',
+        'occurrence': 'Ocorrência',
+        'report': 'Relatório',
+        'vehicle': 'Veículo',
+      };
+      return entityMap[entity] || entity;
+    };
+
+    return (
+      <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
+        <View style={styles.tableCell}>
+          <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
+            {new Date(item.createdAt).toLocaleDateString('pt-BR')}
+          </Text>
+          <Text style={[styles.cellSubText, { color: darkTheme.colors.onSurfaceVariant }]}>
+            {new Date(item.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+        </View>
+        
+        <View style={styles.tableCell}>
+          <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
+            {item.user?.name || 'Sistema'}
+          </Text>
+          <Text style={[styles.cellSubText, { color: darkTheme.colors.onSurfaceVariant }]}>
+            {item.user?.email || '-'}
+          </Text>
+        </View>
+        
+        <View style={styles.tableCell}>
+          <View style={[
+            styles.actionBadge,
+            { backgroundColor: getActionColor(item.action) }
+          ]}>
+            <Text style={styles.actionText}>
+              {getActionLabel(item.action)}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.tableCell}>
+          <View style={[
+            styles.entityBadge,
+            { backgroundColor: '#333' }
+          ]}>
+            <Text style={styles.entityText}>
+              {getEntityLabel(item.entity)}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // Renderizar filtro de ação
+  const renderAcaoFiltro = ({ item }: any) => (
     <TouchableOpacity
       style={[
-        styles.tipoFiltroButton,
-        tipoSelecionado === item && { backgroundColor: darkTheme.colors.primary }
+        styles.filtroButtonItem,
+        acaoSelecionada === item.value && { backgroundColor: darkTheme.colors.primary }
       ]}
       onPress={() => {
-        setTipoSelecionado(item);
-        setTimeout(aplicarFiltros, 100);
+        setAcaoSelecionada(item.value);
       }}
     >
       <Text style={[
-        styles.tipoFiltroText,
-        tipoSelecionado === item 
+        styles.filtroButtonText,
+        acaoSelecionada === item.value 
           ? { color: '#FFFFFF' } 
           : { color: darkTheme.colors.onSurface }
       ]}>
-        {item}
+        {item.label}
       </Text>
     </TouchableOpacity>
   );
 
+  // Renderizar filtro de entidade
+  const renderEntidadeFiltro = ({ item }: any) => (
+    <TouchableOpacity
+      style={[
+        styles.filtroButtonItem,
+        entidadeSelecionada === item.value && { backgroundColor: darkTheme.colors.primary }
+      ]}
+      onPress={() => {
+        setEntidadeSelecionada(item.value);
+      }}
+    >
+      <Text style={[
+        styles.filtroButtonText,
+        entidadeSelecionada === item.value 
+          ? { color: '#FFFFFF' } 
+          : { color: darkTheme.colors.onSurface }
+      ]}>
+        {item.label}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  // Função de refresh
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    carregarLogs();
+  }, [carregarLogs]);
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={darkTheme.colors.primary} />
+        <Text style={{ marginTop: 16, color: darkTheme.colors.onSurface }}>
+          Carregando logs de auditoria...
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
-      {/* Overlay quando o drawer está aberto */}
-      {drawerVisible && (
-        <Animated.View 
-          style={[
-            styles.overlay, 
-            { 
-              opacity: overlayAnim,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)' 
-            }
-          ]}
-        >
-          <TouchableOpacity 
-            style={styles.overlayTouchable}
-            onPress={toggleDrawer}
-            activeOpacity={1}
-          />
-        </Animated.View>
-      )}
-
-      {/* Drawer/Sidebar */}
-      <Animated.View 
-        style={[
-          styles.drawer,
-          { 
-            transform: [{ translateX: slideAnim }],
-            backgroundColor: darkTheme.colors.surface,
-            borderRightColor: darkTheme.colors.outline
-          }
-        ]}
-      >
-        <View style={styles.drawerHeader}>
-          <View style={styles.userInfo}>
-            <View style={[styles.avatar, { backgroundColor: darkTheme.colors.primary }]}>
-              <Text style={styles.avatarText}>CN</Text>
-            </View>
-            <View>
-              <Text style={[styles.userName, { color: darkTheme.colors.onSurface }]}>
-                Carla Nunes
-              </Text>
-              <Text style={[styles.userRole, { color: darkTheme.colors.onSurfaceVariant }]}>
-                Administrador
-              </Text>
-            </View>
-          </View>
-          <IconButton
-            icon="close"
-            iconColor={darkTheme.colors.onSurface}
-            size={24}
-            onPress={toggleDrawer}
-            style={styles.closeButton}
-          />
-        </View>
-
-        <View style={styles.menuItems}>
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Ocorrencias');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Ocorrências
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Usuarios');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Usuários
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Relatorios');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Relatórios
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.menuItem, styles.activeMenuItem]}
-            onPress={toggleDrawer}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.primary }]}>
-              Auditoria
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.drawerFooter}>
-          <Button
-            mode="outlined"
-            icon="logout"
-            onPress={() => {
-              toggleDrawer();
-              // Adicionar lógica de logout
-            }}
-            style={[styles.logoutButton, { borderColor: darkTheme.colors.error }]}
-            labelStyle={{ color: darkTheme.colors.error }}
-          >
-            Sair
-          </Button>
-        </View>
-      </Animated.View>
+      {/* Drawer Animated */}
+      <AnimatedDrawer ref={drawerRef} />
 
       {/* Conteúdo principal */}
       <View style={{ flex: 1 }}>
         {/* Header com botão do menu */}
         <View style={[styles.header, { backgroundColor: darkTheme.colors.surface }]}>
-          <TouchableOpacity onPress={toggleDrawer} style={styles.menuButton}>
+          <TouchableOpacity onPress={() => drawerRef.current?.toggle()} style={styles.menuButton}>
             <View style={styles.hamburgerIcon}>
               <View style={[styles.hamburgerLine, { backgroundColor: darkTheme.colors.onSurface }]} />
               <View style={[styles.hamburgerLine, { backgroundColor: darkTheme.colors.onSurface }]} />
@@ -369,6 +360,14 @@ export default function AuditoriaLogs({ navigation }: any) {
         <ScrollView 
           style={[styles.container, { backgroundColor: darkTheme.colors.background }]}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[darkTheme.colors.primary]}
+              tintColor={darkTheme.colors.primary}
+            />
+          }
         >
           {/* Seção de Filtros */}
           <Card style={[styles.cardSection, { backgroundColor: darkTheme.colors.surface }]}>
@@ -377,17 +376,30 @@ export default function AuditoriaLogs({ navigation }: any) {
                 Filtros de Busca
               </Text>
 
-              {/* Filtros por tipo */}
+              {/* Filtros por ação */}
               <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
-                Tipo de Evento
+                Tipo de Ação
               </Text>
               <FlatList
-                data={TIPOS_EVENTO}
-                renderItem={renderTipoFiltro}
-                keyExtractor={(item) => item}
+                data={ACTIONS}
+                renderItem={renderAcaoFiltro}
+                keyExtractor={(item) => item.value}
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={styles.tiposList}
+                style={styles.filtroList}
+              />
+
+              {/* Filtros por entidade */}
+              <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
+                Entidade
+              </Text>
+              <FlatList
+                data={ENTITIES}
+                renderItem={renderEntidadeFiltro}
+                keyExtractor={(item) => item.value}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.filtroList}
               />
 
               {/* Filtro de usuário */}
@@ -395,7 +407,7 @@ export default function AuditoriaLogs({ navigation }: any) {
                 Usuário
               </Text>
               <TextInput
-                placeholder="Digitar o nome do usuário"
+                placeholder="Digitar nome ou email do usuário"
                 value={filtroUsuario}
                 onChangeText={setFiltroUsuario}
                 style={[styles.input, { 
@@ -406,53 +418,62 @@ export default function AuditoriaLogs({ navigation }: any) {
                 placeholderTextColor={darkTheme.colors.onSurfaceVariant}
               />
 
-              {/* Filtro de evento */}
-              <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
-                Evento
-              </Text>
-              <TextInput
-                placeholder="Relacionar o evento"
-                value={filtroEvento}
-                onChangeText={setFiltroEvento}
-                style={[styles.input, { 
-                  backgroundColor: darkTheme.colors.background,
-                  color: darkTheme.colors.onSurface,
-                  borderColor: darkTheme.colors.outline
-                }]}
-                placeholderTextColor={darkTheme.colors.onSurfaceVariant}
-              />
-
-              {/* Filtro de data */}
-              <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
-                Data
-              </Text>
-              <TextInput
-                placeholder="DD/MM/AA"
-                value={filtroData}
-                onChangeText={setFiltroData}
-                style={[styles.input, { 
-                  backgroundColor: darkTheme.colors.background,
-                  color: darkTheme.colors.onSurface,
-                  borderColor: darkTheme.colors.outline
-                }]}
-                placeholderTextColor={darkTheme.colors.onSurfaceVariant}
-                keyboardType="numbers-and-punctuation"
-              />
+              {/* Filtros de data */}
+              <View style={styles.dateFilterContainer}>
+                <View style={styles.dateInputContainer}>
+                  <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
+                    Data Início
+                  </Text>
+                  <TextInput
+                    placeholder="DD/MM/AAAA"
+                    value={filtroDataInicio}
+                    onChangeText={setFiltroDataInicio}
+                    style={[styles.input, { 
+                      backgroundColor: darkTheme.colors.background,
+                      color: darkTheme.colors.onSurface,
+                      borderColor: darkTheme.colors.outline
+                    }]}
+                    placeholderTextColor={darkTheme.colors.onSurfaceVariant}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+                
+                <View style={styles.dateInputContainer}>
+                  <Text style={[styles.subTitle, { color: darkTheme.colors.onSurface }]}>
+                    Data Fim
+                  </Text>
+                  <TextInput
+                    placeholder="DD/MM/AAAA"
+                    value={filtroDataFim}
+                    onChangeText={setFiltroDataFim}
+                    style={[styles.input, { 
+                      backgroundColor: darkTheme.colors.background,
+                      color: darkTheme.colors.onSurface,
+                      borderColor: darkTheme.colors.outline
+                    }]}
+                    placeholderTextColor={darkTheme.colors.onSurfaceVariant}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+              </View>
 
               {/* Botões de ação dos filtros */}
-              <View style={styles.filtroButtons}>
+              <View style={styles.filtroButtonsContainer}>
                 <Button
                   mode="contained"
                   onPress={aplicarFiltros}
-                  style={[styles.filtroButton, { backgroundColor: darkTheme.colors.primary }]}
+                  style={[styles.filtroButtonApply, { backgroundColor: darkTheme.colors.primary }]}
+                  loading={loading}
+                  disabled={loading}
                 >
                   Aplicar Filtros
                 </Button>
                 <Button
                   mode="outlined"
                   onPress={limparFiltros}
-                  style={[styles.filtroButton, { borderColor: darkTheme.colors.outline }]}
+                  style={[styles.filtroButtonItem, { borderColor: darkTheme.colors.outline }]}
                   labelStyle={{ color: darkTheme.colors.onSurface }}
+                  disabled={loading}
                 >
                   Limpar
                 </Button>
@@ -466,22 +487,22 @@ export default function AuditoriaLogs({ navigation }: any) {
               <View style={styles.tableHeader}>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
-                    ID
+                    Data/Hora
                   </Text>
                 </View>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
-                    Nome
+                    Usuário
                   </Text>
                 </View>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
-                    Evento
+                    Ação
                   </Text>
                 </View>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
-                    Data
+                    Entidade
                   </Text>
                 </View>
               </View>
@@ -490,15 +511,22 @@ export default function AuditoriaLogs({ navigation }: any) {
 
               {logsFiltrados.length === 0 ? (
                 <View style={styles.emptyState}>
+                  <IconButton
+                    icon="clipboard-text-outline"
+                    size={40}
+                    iconColor={darkTheme.colors.onSurfaceVariant}
+                  />
                   <Text style={[styles.emptyText, { color: darkTheme.colors.onSurfaceVariant }]}>
-                    Nenhum log encontrado com os filtros aplicados
+                    {logs.length === 0 
+                      ? 'Nenhum log de auditoria encontrado' 
+                      : 'Nenhum log encontrado com os filtros aplicados'}
                   </Text>
                 </View>
               ) : (
                 <FlatList
                   data={logsFiltrados}
                   renderItem={renderLogItem}
-                  keyExtractor={(item) => item.id.toString()}
+                  keyExtractor={(item) => item.id}
                   scrollEnabled={false}
                 />
               )}
@@ -506,7 +534,7 @@ export default function AuditoriaLogs({ navigation }: any) {
               {/* Informações do resultado */}
               <View style={styles.resultInfo}>
                 <Text style={[styles.resultText, { color: darkTheme.colors.onSurfaceVariant }]}>
-                  Mostrando {logsFiltrados.length} de {LOGS_AUDITORIA.length} registros
+                  Mostrando {logsFiltrados.length} de {logs.length} registros
                 </Text>
               </View>
             </Card.Content>
@@ -518,10 +546,9 @@ export default function AuditoriaLogs({ navigation }: any) {
               mode="contained"
               icon="download"
               style={[styles.actionButton, { backgroundColor: darkTheme.colors.primary }]}
-              onPress={() => {
-                // Lógica para exportar logs
-                console.log('Exportar logs');
-              }}
+              onPress={exportarLogs}
+              loading={loading}
+              disabled={loading}
             >
               Exportar Logs
             </Button>
@@ -530,7 +557,9 @@ export default function AuditoriaLogs({ navigation }: any) {
               icon="refresh"
               style={[styles.actionButton, { borderColor: darkTheme.colors.primary }]}
               labelStyle={{ color: darkTheme.colors.primary }}
-              onPress={limparFiltros}
+              onPress={() => carregarLogs()}
+              loading={loading}
+              disabled={loading}
             >
               Atualizar
             </Button>
@@ -544,91 +573,6 @@ export default function AuditoriaLogs({ navigation }: any) {
 }
 
 const styles = StyleSheet.create({
-  // Estilos do drawer/sidebar
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 998,
-  },
-  overlayTouchable: {
-    flex: 1,
-  },
-  drawer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: width * 0.7,
-    zIndex: 999,
-    borderRightWidth: 1,
-  },
-  drawerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    paddingTop: 50,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  userRole: {
-    fontSize: 14,
-    opacity: 0.8,
-  },
-  closeButton: {
-    margin: 0,
-  },
-  menuItems: {
-    paddingTop: 20,
-  },
-  menuItem: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  activeMenuItem: {
-    backgroundColor: 'rgba(229, 57, 53, 0.1)',
-  },
-  menuItemText: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  drawerFooter: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-  },
-  logoutButton: {
-    borderWidth: 1,
-    borderRadius: 6,
-  },
-
   // Header principal
   header: {
     flexDirection: 'row',
@@ -696,10 +640,10 @@ const styles = StyleSheet.create({
   },
 
   // Estilos para filtros
-  tiposList: {
+  filtroList: {
     marginBottom: 16,
   },
-  tipoFiltroButton: {
+  filtroButtonItem: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
@@ -707,16 +651,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#444',
   },
-  tipoFiltroText: {
+  filtroButtonText: {
     fontSize: 12,
     fontWeight: '500',
   },
-  filtroButtons: {
+  dateFilterContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  dateInputContainer: {
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  filtroButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 16,
   },
-  filtroButton: {
+  filtroButtonApply: {
     flex: 1,
     marginHorizontal: 4,
   },
@@ -729,9 +682,10 @@ const styles = StyleSheet.create({
   tableHeaderCell: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -749,9 +703,40 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 4,
   },
   cellText: {
-    fontSize: 12,
+    fontSize: 11,
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  cellSubText: {
+    fontSize: 10,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+  actionBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 80,
+  },
+  actionText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  entityBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 70,
+  },
+  entityText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
     textAlign: 'center',
   },
 
@@ -763,6 +748,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     textAlign: 'center',
+    marginTop: 8,
   },
 
   // Informações do resultado

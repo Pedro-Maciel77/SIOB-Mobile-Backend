@@ -1,391 +1,381 @@
-import React, { useState } from 'react';
+// screens/Usuarios.tsx
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Animated,
   Dimensions,
   SafeAreaView,
   TextInput,
   FlatList,
   Modal,
+  RefreshControl,
+  Alert,
 } from 'react-native';
-import { Text, Card, Divider, IconButton, Button, TextInput as PaperInput } from 'react-native-paper';
+import { Text, Card, Divider, IconButton, Button, TextInput as PaperInput, ActivityIndicator, Menu } from 'react-native-paper';
 import { darkTheme } from '../theme/darkTheme';
+import AnimatedDrawer from '../components/AnimatedDrawer';
+import api from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
-// Dados de usuários
-const USUARIOS = [
-  { 
-    id: 34, 
-    nome: 'Maria Silva', 
-    email: 'maria.silva@gmail.com', 
-    cargo: 'ADM',
-    status: 'Ativo',
-    dataCadastro: '15/03/2024'
-  },
-  { 
-    id: 78, 
-    nome: 'Pedro Santos', 
-    email: 'pedro.santos@gmail.com', 
-    cargo: 'Analista',
-    status: 'Ativo',
-    dataCadastro: '22/02/2024'
-  },
-  { 
-    id: 110, 
-    nome: 'Ana Oliveira', 
-    email: 'ana.oliveira@gmail.com', 
-    cargo: 'Supervisor',
-    status: 'Inativo',
-    dataCadastro: '10/01/2024'
-  },
-  { 
-    id: 3, 
-    nome: 'Carlos Lima', 
-    email: 'carlos.lima@gmail.com', 
-    cargo: 'Analista',
-    status: 'Ativo',
-    dataCadastro: '05/04/2024'
-  },
-  { 
-    id: 56, 
-    nome: 'Julia Costa', 
-    email: 'julia.costa@gmail.com', 
-    cargo: 'Gerente',
-    status: 'Ativo',
-    dataCadastro: '18/03/2024'
-  },
-  { 
-    id: 89, 
-    nome: 'Roberto Alves', 
-    email: 'roberto.alves@gmail.com', 
-    cargo: 'ADM',
-    status: 'Ativo',
-    dataCadastro: '30/01/2024'
-  },
-  { 
-    id: 12, 
-    nome: 'Fernanda Rocha', 
-    email: 'fernanda.rocha@gmail.com', 
-    cargo: 'Analista',
-    status: 'Inativo',
-    dataCadastro: '12/02/2024'
-  },
-  { 
-    id: 45, 
-    nome: 'Lucas Pereira', 
-    email: 'lucas.pereira@gmail.com', 
-    cargo: 'Supervisor',
-    status: 'Ativo',
-    dataCadastro: '25/03/2024'
-  },
+// Tipos baseados na sua entidade User
+interface Usuario {
+  id: string;
+  name: string;
+  email: string;
+  registration?: string;
+  unit?: string;
+  role: 'admin' | 'supervisor' | 'user' | 'operator';
+  active?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Tipos para filtros
+interface UserFilters {
+  search?: string;
+  role?: string;
+  unit?: string;
+  page?: number;
+  limit?: number;
+}
+
+// Cargos disponíveis (traduzidos para exibição)
+const ROLES = [
+  { value: 'admin', label: 'Administrador' },
+  { value: 'supervisor', label: 'Supervisor' },
+  { value: 'user', label: 'Usuário' },
+  { value: 'operator', label: 'Operador' },
 ];
 
-// Cargos disponíveis
-const CARGOS = ['ADM', 'Analista', 'Supervisor', 'Gerente', 'Operador'];
-
-// Status disponíveis
-const STATUS = ['Ativo', 'Inativo'];
-
 export default function GestaoUsuarios({ navigation }: any) {
-  const [drawerVisible, setDrawerVisible] = useState(false);
-  const slideAnim = useState(new Animated.Value(-width * 0.7))[0];
-  const overlayAnim = useState(new Animated.Value(0))[0];
+  const drawerRef = useRef<any>(null);
   
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [usuariosFiltrados, setUsuariosFiltrados] = useState<Usuario[]>([]);
   const [busca, setBusca] = useState('');
-  const [usuariosFiltrados, setUsuariosFiltrados] = useState(USUARIOS);
+  const [filtros, setFiltros] = useState<UserFilters>({});
   const [modalNovoUsuario, setModalNovoUsuario] = useState(false);
   const [modalEditarUsuario, setModalEditarUsuario] = useState(false);
-  const [usuarioSelecionado, setUsuarioSelecionado] = useState<any>(null);
+  const [modalFiltros, setModalFiltros] = useState(false);
+  const [usuarioSelecionado, setUsuarioSelecionado] = useState<Usuario | null>(null);
+  const [menuVisible, setMenuVisible] = useState<string | null>(null);
   
   // Estado para novo usuário
   const [novoUsuario, setNovoUsuario] = useState({
-    nome: '',
+    name: '',
     email: '',
-    cargo: '',
-    senha: '',
-    confirmarSenha: '',
+    registration: '',
+    unit: '',
+    role: 'user' as 'admin' | 'supervisor' | 'user' | 'operator',
+    password: '',
+    confirmPassword: '',
   });
 
-  // Função para abrir/fechar o drawer
-  const toggleDrawer = () => {
-    if (drawerVisible) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: -width * 0.7,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start(() => setDrawerVisible(false));
-    } else {
-      setDrawerVisible(true);
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 0.5,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  };
+  // Estado para estatísticas
+  const [estatisticas, setEstatisticas] = useState({
+    total: 0,
+    ativos: 0,
+    inativos: 0,
+    porCargo: {} as Record<string, number>,
+  });
 
-  // Função para buscar usuários
-  const buscarUsuarios = (texto: string) => {
-    setBusca(texto);
-    if (texto.trim() === '') {
-      setUsuariosFiltrados(USUARIOS);
+  // Carregar usuários
+  const carregarUsuarios = useCallback(async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem('@SIOB:token');
+      
+      const response = await api.get('/users', {
+        headers: { Authorization: `Bearer ${token}` },
+        params: filtros,
+      });
+
+      const users = response.data.data || [];
+      setUsuarios(users);
+      setUsuariosFiltrados(users);
+      
+      // Calcular estatísticas
+      const total = users.length;
+      const ativos = users.filter((u: Usuario) => u.active !== false).length;
+      const inativos = total - ativos;
+      
+      const porCargo: Record<string, number> = {};
+      users.forEach((user: Usuario) => {
+        const role = user.role;
+        porCargo[role] = (porCargo[role] || 0) + 1;
+      });
+      
+      setEstatisticas({ total, ativos, inativos, porCargo });
+      
+    } catch (error: any) {
+      console.error('Erro ao carregar usuários:', error);
+      Alert.alert('Erro', 'Não foi possível carregar os usuários');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [filtros]);
+
+  // Efeito para carregar dados iniciais
+  useEffect(() => {
+    carregarUsuarios();
+  }, [carregarUsuarios]);
+
+  // Função para filtrar usuários
+  useEffect(() => {
+    if (busca.trim() === '') {
+      setUsuariosFiltrados(usuarios);
     } else {
-      const filtrados = USUARIOS.filter(usuario =>
-        usuario.nome.toLowerCase().includes(texto.toLowerCase()) ||
-        usuario.email.toLowerCase().includes(texto.toLowerCase()) ||
-        usuario.cargo.toLowerCase().includes(texto.toLowerCase())
+      const filtrados = usuarios.filter(usuario =>
+        usuario.name.toLowerCase().includes(busca.toLowerCase()) ||
+        usuario.email.toLowerCase().includes(busca.toLowerCase()) ||
+        usuario.registration?.toLowerCase().includes(busca.toLowerCase())
       );
       setUsuariosFiltrados(filtrados);
     }
+  }, [busca, usuarios]);
+
+  // Função para criar novo usuário
+  const criarUsuario = async () => {
+    try {
+      if (!novoUsuario.name || !novoUsuario.email) {
+        Alert.alert('Atenção', 'Nome e email são obrigatórios');
+        return;
+      }
+
+      if (novoUsuario.password && novoUsuario.password !== novoUsuario.confirmPassword) {
+        Alert.alert('Atenção', 'As senhas não coincidem');
+        return;
+      }
+
+      setLoading(true);
+      const token = await AsyncStorage.getItem('@SIOB:token');
+      
+      const dadosUsuario = {
+        name: novoUsuario.name,
+        email: novoUsuario.email,
+        registration: novoUsuario.registration || undefined,
+        unit: novoUsuario.unit || undefined,
+        role: novoUsuario.role,
+        password: novoUsuario.password || undefined,
+      };
+
+      const response = await api.post('/users', dadosUsuario, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      Alert.alert('Sucesso', 'Usuário criado com sucesso!');
+      setModalNovoUsuario(false);
+      setNovoUsuario({
+        name: '',
+        email: '',
+        registration: '',
+        unit: '',
+        role: 'user',
+        password: '',
+        confirmPassword: '',
+      });
+      
+      // Recarregar lista
+      carregarUsuarios();
+      
+    } catch (error: any) {
+      console.error('Erro ao criar usuário:', error);
+      Alert.alert(
+        'Erro',
+        error.response?.data?.message || 'Não foi possível criar o usuário'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para atualizar status do usuário
+  const atualizarStatus = async (id: string, active: boolean) => {
+    try {
+      const token = await AsyncStorage.getItem('@SIOB:token');
+      
+      await api.patch(`/users/${id}/status`, { active }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      Alert.alert('Sucesso', `Usuário ${active ? 'ativado' : 'desativado'} com sucesso!`);
+      carregarUsuarios();
+      
+    } catch (error: any) {
+      console.error('Erro ao atualizar status:', error);
+      Alert.alert('Erro', 'Não foi possível atualizar o status');
+    }
+  };
+
+  // Função para deletar usuário
+  const deletarUsuario = (id: string, nome: string) => {
+    Alert.alert(
+      'Confirmar exclusão',
+      `Tem certeza que deseja excluir o usuário ${nome}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const token = await AsyncStorage.getItem('@SIOB:token');
+              
+              await api.delete(`/users/${id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+
+              Alert.alert('Sucesso', 'Usuário excluído com sucesso!');
+              carregarUsuarios();
+              
+            } catch (error: any) {
+              console.error('Erro ao excluir usuário:', error);
+              Alert.alert(
+                'Erro',
+                error.response?.data?.message || 'Não foi possível excluir o usuário'
+              );
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Função para abrir modal de edição
-  const abrirEditarUsuario = (usuario: any) => {
+  const abrirEditarUsuario = (usuario: Usuario) => {
     setUsuarioSelecionado(usuario);
     setModalEditarUsuario(true);
   };
 
-  // Função para deletar usuário
-  const deletarUsuario = (id: number) => {
-    setUsuariosFiltrados(usuariosFiltrados.filter(user => user.id !== id));
-    // Em uma aplicação real, aqui você faria uma chamada à API
-  };
-
-  // Função para adicionar novo usuário
-  const adicionarUsuario = () => {
-    if (!novoUsuario.nome || !novoUsuario.email || !novoUsuario.cargo || !novoUsuario.senha) {
-      alert('Preencha todos os campos obrigatórios');
-      return;
-    }
-
-    if (novoUsuario.senha !== novoUsuario.confirmarSenha) {
-      alert('As senhas não coincidem');
-      return;
-    }
-
-    const novoId = Math.max(...USUARIOS.map(u => u.id)) + 1;
-    const novoUsuarioObj = {
-      id: novoId,
-      nome: novoUsuario.nome,
-      email: novoUsuario.email,
-      cargo: novoUsuario.cargo,
-      status: 'Ativo',
-      dataCadastro: new Date().toLocaleDateString('pt-BR')
-    };
-
-    // Aqui você adicionaria à API
-    console.log('Novo usuário:', novoUsuarioObj);
+  // Renderizar item da lista
+  const renderUsuarioItem = ({ item }: { item: Usuario }) => {
+    const roleLabel = ROLES.find(r => r.value === item.role)?.label || item.role;
+    const isActive = item.active !== false;
     
-    setModalNovoUsuario(false);
-    setNovoUsuario({
-      nome: '',
-      email: '',
-      cargo: '',
-      senha: '',
-      confirmarSenha: '',
-    });
-    
-    // Atualizar lista local
-    setUsuariosFiltrados([...usuariosFiltrados, novoUsuarioObj]);
-  };
-
-  // Renderizar item da tabela
-  const renderUsuarioItem = ({ item }: any) => (
-    <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.id}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.nome}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
-          {item.email}
-        </Text>
-      </View>
-      <View style={styles.tableCell}>
-        <View style={[
-          styles.cargoBadge,
-          { backgroundColor: getCargoColor(item.cargo) }
-        ]}>
-          <Text style={styles.cargoText}>
-            {item.cargo}
+    return (
+      <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
+        <View style={styles.tableCell}>
+          <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
+            {item.name}
           </Text>
         </View>
+        
+        <View style={styles.tableCell}>
+          <Text style={[styles.cellText, { color: darkTheme.colors.onSurface }]}>
+            {item.email}
+          </Text>
+        </View>
+        
+        <View style={styles.tableCell}>
+          <View style={[
+            styles.cargoBadge,
+            { backgroundColor: getRoleColor(item.role) }
+          ]}>
+            <Text style={styles.cargoText}>
+              {roleLabel}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.tableCell}>
+          <View style={[
+            styles.statusBadge,
+            { backgroundColor: isActive ? '#4CAF50' : '#757575' }
+          ]}>
+            <Text style={styles.statusText}>
+              {isActive ? 'Ativo' : 'Inativo'}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.actionsCell}>
+          <Menu
+            visible={menuVisible === item.id}
+            onDismiss={() => setMenuVisible(null)}
+            anchor={
+              <IconButton
+                icon="dots-vertical"
+                size={20}
+                onPress={() => setMenuVisible(item.id)}
+                iconColor={darkTheme.colors.onSurface}
+              />
+            }
+          >
+            <Menu.Item
+              title="Editar"
+              leadingIcon="pencil"
+              onPress={() => {
+                setMenuVisible(null);
+                abrirEditarUsuario(item);
+              }}
+            />
+            <Menu.Item
+              title={isActive ? "Desativar" : "Ativar"}
+              leadingIcon={isActive ? "pause-circle" : "play-circle"}
+              onPress={() => {
+                setMenuVisible(null);
+                atualizarStatus(item.id, !isActive);
+              }}
+            />
+            <Menu.Item
+              title="Excluir"
+              leadingIcon="delete"
+              onPress={() => {
+                setMenuVisible(null);
+                deletarUsuario(item.id, item.name);
+              }}
+              titleStyle={{ color: '#EF5350' }}
+            />
+          </Menu>
+        </View>
       </View>
-      <View style={styles.actionsCell}>
-        <IconButton
-          icon="pencil"
-          size={18}
-          iconColor={darkTheme.colors.primary}
-          onPress={() => abrirEditarUsuario(item)}
-        />
-        <IconButton
-          icon="delete"
-          size={18}
-          iconColor="#EF5350"
-          onPress={() => deletarUsuario(item.id)}
-        />
-      </View>
-    </View>
-  );
+    );
+  };
 
   // Função para obter cor do cargo
-  const getCargoColor = (cargo: string) => {
-    switch (cargo) {
-      case 'ADM': return '#E53935';
-      case 'Gerente': return '#7B1FA2';
-      case 'Supervisor': return '#1976D2';
-      case 'Analista': return '#388E3C';
-      default: return '#757575';
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'admin': return '#E53935';
+      case 'supervisor': return '#1976D2';
+      case 'operator': return '#FF9800';
+      default: return '#388E3C';
     }
   };
+
+  // Função de refresh
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    carregarUsuarios();
+  }, [carregarUsuarios]);
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={darkTheme.colors.primary} />
+        <Text style={{ marginTop: 16, color: darkTheme.colors.onSurface }}>
+          Carregando usuários...
+        </Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
-      {/* Overlay quando o drawer está aberto */}
-      {drawerVisible && (
-        <Animated.View 
-          style={[
-            styles.overlay, 
-            { 
-              opacity: overlayAnim,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)' 
-            }
-          ]}
-        >
-          <TouchableOpacity 
-            style={styles.overlayTouchable}
-            onPress={toggleDrawer}
-            activeOpacity={1}
-          />
-        </Animated.View>
-      )}
-
-      {/* Drawer/Sidebar */}
-      <Animated.View 
-        style={[
-          styles.drawer,
-          { 
-            transform: [{ translateX: slideAnim }],
-            backgroundColor: darkTheme.colors.surface,
-            borderRightColor: darkTheme.colors.outline
-          }
-        ]}
-      >
-        <View style={styles.drawerHeader}>
-          <View style={styles.userInfo}>
-            <View style={[styles.avatar, { backgroundColor: darkTheme.colors.primary }]}>
-              <Text style={styles.avatarText}>CN</Text>
-            </View>
-            <View>
-              <Text style={[styles.userName, { color: darkTheme.colors.onSurface }]}>
-                Carla Nunes
-              </Text>
-              <Text style={[styles.userRole, { color: darkTheme.colors.onSurfaceVariant }]}>
-                Administrador
-              </Text>
-            </View>
-          </View>
-          <IconButton
-            icon="close"
-            iconColor={darkTheme.colors.onSurface}
-            size={24}
-            onPress={toggleDrawer}
-            style={styles.closeButton}
-          />
-        </View>
-
-        <View style={styles.menuItems}>
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Ocorrencias');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Ocorrências
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.menuItem, styles.activeMenuItem]}
-            onPress={toggleDrawer}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.primary }]}>
-              Usuários
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Relatorios');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Relatórios
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => {
-              toggleDrawer();
-              navigation.navigate('Auditoria');
-            }}
-          >
-            <Text style={[styles.menuItemText, { color: darkTheme.colors.onSurface }]}>
-              Auditoria
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.drawerFooter}>
-          <Button
-            mode="outlined"
-            icon="logout"
-            onPress={() => {
-              toggleDrawer();
-              // Adicionar lógica de logout
-            }}
-            style={[styles.logoutButton, { borderColor: darkTheme.colors.error }]}
-            labelStyle={{ color: darkTheme.colors.error }}
-          >
-            Sair
-          </Button>
-        </View>
-      </Animated.View>
+      {/* Drawer Animated */}
+      <AnimatedDrawer ref={drawerRef} />
 
       {/* Conteúdo principal */}
       <View style={{ flex: 1 }}>
         {/* Header com botão do menu */}
         <View style={[styles.header, { backgroundColor: darkTheme.colors.surface }]}>
-          <TouchableOpacity onPress={toggleDrawer} style={styles.menuButton}>
+          <TouchableOpacity onPress={() => drawerRef.current?.toggle()} style={styles.menuButton}>
             <View style={styles.hamburgerIcon}>
               <View style={[styles.hamburgerLine, { backgroundColor: darkTheme.colors.onSurface }]} />
               <View style={[styles.hamburgerLine, { backgroundColor: darkTheme.colors.onSurface }]} />
@@ -404,15 +394,23 @@ export default function GestaoUsuarios({ navigation }: any) {
         <ScrollView 
           style={[styles.container, { backgroundColor: darkTheme.colors.background }]}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[darkTheme.colors.primary]}
+              tintColor={darkTheme.colors.primary}
+            />
+          }
         >
           {/* Barra de busca e ações */}
           <Card style={[styles.cardSection, { backgroundColor: darkTheme.colors.surface }]}>
             <Card.Content style={styles.cardContent}>
               <View style={styles.searchContainer}>
                 <TextInput
-                  placeholder="Buscar usuário"
+                  placeholder="Buscar por nome, email ou matrícula"
                   value={busca}
-                  onChangeText={buscarUsuarios}
+                  onChangeText={setBusca}
                   style={[styles.searchInput, { 
                     backgroundColor: darkTheme.colors.background,
                     color: darkTheme.colors.onSurface,
@@ -420,14 +418,25 @@ export default function GestaoUsuarios({ navigation }: any) {
                   }]}
                   placeholderTextColor={darkTheme.colors.onSurfaceVariant}
                 />
-                <Button
-                  mode="contained"
-                  icon="plus"
-                  onPress={() => setModalNovoUsuario(true)}
-                  style={[styles.addButton, { backgroundColor: darkTheme.colors.primary }]}
-                >
-                  Novo Usuário
-                </Button>
+                <View style={styles.buttonsContainer}>
+                  <Button
+                    mode="outlined"
+                    icon="filter"
+                    onPress={() => setModalFiltros(true)}
+                    style={[styles.filterButton, { borderColor: darkTheme.colors.outline }]}
+                    labelStyle={{ color: darkTheme.colors.onSurface }}
+                  >
+                    Filtros
+                  </Button>
+                  <Button
+                    mode="contained"
+                    icon="plus"
+                    onPress={() => setModalNovoUsuario(true)}
+                    style={[styles.addButton, { backgroundColor: darkTheme.colors.primary }]}
+                  >
+                    Novo
+                  </Button>
+                </View>
               </View>
             </Card.Content>
           </Card>
@@ -436,11 +445,6 @@ export default function GestaoUsuarios({ navigation }: any) {
           <Card style={[styles.cardSection, { backgroundColor: darkTheme.colors.surface }]}>
             <Card.Content style={styles.cardContent}>
               <View style={styles.tableHeader}>
-                <View style={styles.tableHeaderCell}>
-                  <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
-                    ID
-                  </Text>
-                </View>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
                     Nome
@@ -458,6 +462,11 @@ export default function GestaoUsuarios({ navigation }: any) {
                 </View>
                 <View style={styles.tableHeaderCell}>
                   <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
+                    Status
+                  </Text>
+                </View>
+                <View style={styles.tableHeaderCell}>
+                  <Text style={[styles.headerText, { color: darkTheme.colors.primary }]}>
                     Ações
                   </Text>
                 </View>
@@ -467,15 +476,22 @@ export default function GestaoUsuarios({ navigation }: any) {
 
               {usuariosFiltrados.length === 0 ? (
                 <View style={styles.emptyState}>
+                  <IconButton
+                    icon="account-search"
+                    size={40}
+                    iconColor={darkTheme.colors.onSurfaceVariant}
+                  />
                   <Text style={[styles.emptyText, { color: darkTheme.colors.onSurfaceVariant }]}>
-                    Nenhum usuário encontrado
+                    {usuarios.length === 0 
+                      ? 'Nenhum usuário cadastrado' 
+                      : 'Nenhum usuário encontrado com os filtros atuais'}
                   </Text>
                 </View>
               ) : (
                 <FlatList
                   data={usuariosFiltrados}
                   renderItem={renderUsuarioItem}
-                  keyExtractor={(item) => item.id.toString()}
+                  keyExtractor={(item) => item.id}
                   scrollEnabled={false}
                 />
               )}
@@ -483,7 +499,7 @@ export default function GestaoUsuarios({ navigation }: any) {
               {/* Informações do resultado */}
               <View style={styles.resultInfo}>
                 <Text style={[styles.resultText, { color: darkTheme.colors.onSurfaceVariant }]}>
-                  {usuariosFiltrados.length} usuário(s) encontrado(s)
+                  {usuariosFiltrados.length} de {usuarios.length} usuário(s)
                 </Text>
               </View>
             </Card.Content>
@@ -498,30 +514,47 @@ export default function GestaoUsuarios({ navigation }: any) {
               <View style={styles.statsContainer}>
                 <View style={styles.statItem}>
                   <Text style={[styles.statNumber, { color: darkTheme.colors.primary }]}>
-                    {USUARIOS.length}
+                    {estatisticas.total}
                   </Text>
                   <Text style={[styles.statLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
-                    Total de Usuários
+                    Total
                   </Text>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statItem}>
                   <Text style={[styles.statNumber, { color: '#4CAF50' }]}>
-                    {USUARIOS.filter(u => u.status === 'Ativo').length}
+                    {estatisticas.ativos}
                   </Text>
                   <Text style={[styles.statLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
-                    Usuários Ativos
+                    Ativos
                   </Text>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statItem}>
-                  <Text style={[styles.statNumber, { color: '#EF5350' }]}>
-                    {USUARIOS.filter(u => u.status === 'Inativo').length}
+                  <Text style={[styles.statNumber, { color: '#757575' }]}>
+                    {estatisticas.inativos}
                   </Text>
                   <Text style={[styles.statLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
-                    Usuários Inativos
+                    Inativos
                   </Text>
                 </View>
+              </View>
+
+              {/* Distribuição por cargo */}
+              <View style={styles.rolesContainer}>
+                {Object.entries(estatisticas.porCargo).map(([role, count]) => (
+                  <View key={role} style={styles.roleItem}>
+                    <View style={styles.roleInfo}>
+                      <View style={[styles.roleColor, { backgroundColor: getRoleColor(role) }]} />
+                      <Text style={[styles.roleLabel, { color: darkTheme.colors.onSurface }]}>
+                        {ROLES.find(r => r.value === role)?.label || role}
+                      </Text>
+                    </View>
+                    <Text style={[styles.roleCount, { color: darkTheme.colors.onSurface }]}>
+                      {count}
+                    </Text>
+                  </View>
+                ))}
               </View>
             </Card.Content>
           </Card>
@@ -535,7 +568,7 @@ export default function GestaoUsuarios({ navigation }: any) {
         visible={modalNovoUsuario}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setModalNovoUsuario(false)}
+        onRequestClose={() => !loading && setModalNovoUsuario(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: darkTheme.colors.surface }]}>
@@ -546,19 +579,21 @@ export default function GestaoUsuarios({ navigation }: any) {
               <IconButton
                 icon="close"
                 size={24}
-                onPress={() => setModalNovoUsuario(false)}
+                onPress={() => !loading && setModalNovoUsuario(false)}
                 iconColor={darkTheme.colors.onSurface}
+                disabled={loading}
               />
             </View>
             
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <PaperInput
                 label="Nome completo *"
-                value={novoUsuario.nome}
-                onChangeText={(text) => setNovoUsuario({...novoUsuario, nome: text})}
+                value={novoUsuario.name}
+                onChangeText={(text) => setNovoUsuario({...novoUsuario, name: text})}
                 style={styles.modalInput}
                 theme={darkTheme}
                 mode="outlined"
+                disabled={loading}
               />
               
               <PaperInput
@@ -570,30 +605,52 @@ export default function GestaoUsuarios({ navigation }: any) {
                 mode="outlined"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                disabled={loading}
+              />
+              
+              <PaperInput
+                label="Matrícula (opcional)"
+                value={novoUsuario.registration}
+                onChangeText={(text) => setNovoUsuario({...novoUsuario, registration: text})}
+                style={styles.modalInput}
+                theme={darkTheme}
+                mode="outlined"
+                disabled={loading}
+              />
+              
+              <PaperInput
+                label="Unidade (opcional)"
+                value={novoUsuario.unit}
+                onChangeText={(text) => setNovoUsuario({...novoUsuario, unit: text})}
+                style={styles.modalInput}
+                theme={darkTheme}
+                mode="outlined"
+                disabled={loading}
               />
               
               <View style={styles.modalSelectContainer}>
                 <Text style={[styles.modalLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
                   Cargo *
                 </Text>
-                <View style={styles.cargosContainer}>
-                  {CARGOS.map((cargo) => (
+                <View style={styles.rolesOptionsContainer}>
+                  {ROLES.map((role) => (
                     <TouchableOpacity
-                      key={cargo}
+                      key={role.value}
                       style={[
-                        styles.cargoOption,
-                        novoUsuario.cargo === cargo && { 
-                          backgroundColor: getCargoColor(cargo),
-                          borderColor: getCargoColor(cargo)
+                        styles.roleOption,
+                        novoUsuario.role === role.value && { 
+                          backgroundColor: getRoleColor(role.value),
+                          borderColor: getRoleColor(role.value)
                         }
                       ]}
-                      onPress={() => setNovoUsuario({...novoUsuario, cargo})}
+                      onPress={() => setNovoUsuario({...novoUsuario, role: role.value as any})}
+                      disabled={loading}
                     >
                       <Text style={[
-                        styles.cargoOptionText,
-                        novoUsuario.cargo === cargo && { color: '#FFFFFF' }
+                        styles.roleOptionText,
+                        novoUsuario.role === role.value && { color: '#FFFFFF' }
                       ]}>
-                        {cargo}
+                        {role.label}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -601,23 +658,25 @@ export default function GestaoUsuarios({ navigation }: any) {
               </View>
               
               <PaperInput
-                label="Senha *"
-                value={novoUsuario.senha}
-                onChangeText={(text) => setNovoUsuario({...novoUsuario, senha: text})}
+                label="Senha (opcional - padrão: 123456)"
+                value={novoUsuario.password}
+                onChangeText={(text) => setNovoUsuario({...novoUsuario, password: text})}
                 style={styles.modalInput}
                 theme={darkTheme}
                 mode="outlined"
                 secureTextEntry
+                disabled={loading}
               />
               
               <PaperInput
-                label="Confirmar Senha *"
-                value={novoUsuario.confirmarSenha}
-                onChangeText={(text) => setNovoUsuario({...novoUsuario, confirmarSenha: text})}
+                label="Confirmar Senha"
+                value={novoUsuario.confirmPassword}
+                onChangeText={(text) => setNovoUsuario({...novoUsuario, confirmPassword: text})}
                 style={styles.modalInput}
                 theme={darkTheme}
                 mode="outlined"
                 secureTextEntry
+                disabled={loading}
               />
             </ScrollView>
             
@@ -627,13 +686,16 @@ export default function GestaoUsuarios({ navigation }: any) {
                 onPress={() => setModalNovoUsuario(false)}
                 style={[styles.modalButton, { borderColor: darkTheme.colors.outline }]}
                 labelStyle={{ color: darkTheme.colors.onSurface }}
+                disabled={loading}
               >
                 Cancelar
               </Button>
               <Button
                 mode="contained"
-                onPress={adicionarUsuario}
+                onPress={criarUsuario}
                 style={[styles.modalButton, { backgroundColor: darkTheme.colors.primary }]}
+                loading={loading}
+                disabled={loading}
               >
                 Criar Usuário
               </Button>
@@ -642,7 +704,7 @@ export default function GestaoUsuarios({ navigation }: any) {
         </View>
       </Modal>
 
-      {/* Modal para Editar Usuário */}
+      {/* Modal para Detalhes do Usuário */}
       <Modal
         visible={modalEditarUsuario}
         animationType="slide"
@@ -653,7 +715,7 @@ export default function GestaoUsuarios({ navigation }: any) {
           <View style={[styles.modalContent, { backgroundColor: darkTheme.colors.surface }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>
-                Editar Usuário
+                Detalhes do Usuário
               </Text>
               <IconButton
                 icon="close"
@@ -664,26 +726,99 @@ export default function GestaoUsuarios({ navigation }: any) {
             </View>
             
             {usuarioSelecionado && (
-              <View style={styles.modalBody}>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  ID: {usuarioSelecionado.id}
-                </Text>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  Nome: {usuarioSelecionado.nome}
-                </Text>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  Email: {usuarioSelecionado.email}
-                </Text>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  Cargo: {usuarioSelecionado.cargo}
-                </Text>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  Status: {usuarioSelecionado.status}
-                </Text>
-                <Text style={[styles.userInfoText, { color: darkTheme.colors.onSurface }]}>
-                  Data de Cadastro: {usuarioSelecionado.dataCadastro}
-                </Text>
-              </View>
+              <ScrollView style={styles.modalBody}>
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    ID:
+                  </Text>
+                  <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                    {usuarioSelecionado.id}
+                  </Text>
+                </View>
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Nome:
+                  </Text>
+                  <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                    {usuarioSelecionado.name}
+                  </Text>
+                </View>
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Email:
+                  </Text>
+                  <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                    {usuarioSelecionado.email}
+                  </Text>
+                </View>
+                
+                {usuarioSelecionado.registration && (
+                  <View style={styles.userInfoItem}>
+                    <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                      Matrícula:
+                    </Text>
+                    <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                      {usuarioSelecionado.registration}
+                    </Text>
+                  </View>
+                )}
+                
+                {usuarioSelecionado.unit && (
+                  <View style={styles.userInfoItem}>
+                    <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                      Unidade:
+                    </Text>
+                    <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                      {usuarioSelecionado.unit}
+                    </Text>
+                  </View>
+                )}
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Cargo:
+                  </Text>
+                  <View style={[styles.cargoBadgeInline, { backgroundColor: getRoleColor(usuarioSelecionado.role) }]}>
+                    <Text style={styles.cargoText}>
+                      {ROLES.find(r => r.value === usuarioSelecionado.role)?.label || usuarioSelecionado.role}
+                    </Text>
+                  </View>
+                </View>
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Status:
+                  </Text>
+                  <View style={[
+                    styles.statusBadgeInline,
+                    { backgroundColor: usuarioSelecionado.active !== false ? '#4CAF50' : '#757575' }
+                  ]}>
+                    <Text style={styles.statusText}>
+                      {usuarioSelecionado.active !== false ? 'Ativo' : 'Inativo'}
+                    </Text>
+                  </View>
+                </View>
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Criado em:
+                  </Text>
+                  <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                    {new Date(usuarioSelecionado.createdAt).toLocaleDateString('pt-BR')}
+                  </Text>
+                </View>
+                
+                <View style={styles.userInfoItem}>
+                  <Text style={[styles.userInfoLabel, { color: darkTheme.colors.onSurfaceVariant }]}>
+                    Atualizado em:
+                  </Text>
+                  <Text style={[styles.userInfoValue, { color: darkTheme.colors.onSurface }]}>
+                    {new Date(usuarioSelecionado.updatedAt).toLocaleDateString('pt-BR')}
+                  </Text>
+                </View>
+              </ScrollView>
             )}
             
             <View style={styles.modalFooter}>
@@ -698,96 +833,92 @@ export default function GestaoUsuarios({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      {/* Modal para Filtros */}
+      <Modal
+        visible={modalFiltros}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setModalFiltros(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: darkTheme.colors.surface }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>
+                Filtros
+              </Text>
+              <IconButton
+                icon="close"
+                size={24}
+                onPress={() => setModalFiltros(false)}
+                iconColor={darkTheme.colors.onSurface}
+              />
+            </View>
+            
+            <View style={styles.modalBody}>
+              <Text style={[styles.modalLabel, { color: darkTheme.colors.onSurfaceVariant, marginBottom: 16 }]}>
+                Filtrar por cargo:
+              </Text>
+              <View style={styles.rolesOptionsContainer}>
+                {[{ value: '', label: 'Todos' }, ...ROLES].map((role) => (
+                  <TouchableOpacity
+                    key={role.value}
+                    style={[
+                      styles.roleOption,
+                      filtros.role === role.value && { 
+                        backgroundColor: role.value ? getRoleColor(role.value) : darkTheme.colors.primary,
+                        borderColor: role.value ? getRoleColor(role.value) : darkTheme.colors.primary
+                      }
+                    ]}
+                    onPress={() => {
+                      setFiltros(prev => ({
+                        ...prev,
+                        role: role.value || undefined
+                      }));
+                    }}
+                  >
+                    <Text style={[
+                      styles.roleOptionText,
+                      filtros.role === role.value && { color: '#FFFFFF' }
+                    ]}>
+                      {role.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            
+            <View style={styles.modalFooter}>
+              <Button
+                mode="outlined"
+                onPress={() => {
+                  setFiltros({});
+                  setModalFiltros(false);
+                }}
+                style={[styles.modalButton, { borderColor: darkTheme.colors.outline }]}
+                labelStyle={{ color: darkTheme.colors.onSurface }}
+              >
+                Limpar
+              </Button>
+              <Button
+                mode="contained"
+                onPress={() => {
+                  setModalFiltros(false);
+                  carregarUsuarios();
+                }}
+                style={[styles.modalButton, { backgroundColor: darkTheme.colors.primary }]}
+              >
+                Aplicar
+              </Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  // Estilos do drawer/sidebar
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 998,
-  },
-  overlayTouchable: {
-    flex: 1,
-  },
-  drawer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: width * 0.7,
-    zIndex: 999,
-    borderRightWidth: 1,
-  },
-  drawerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    paddingTop: 50,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  userRole: {
-    fontSize: 14,
-    opacity: 0.8,
-  },
-  closeButton: {
-    margin: 0,
-  },
-  menuItems: {
-    paddingTop: 20,
-  },
-  menuItem: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  activeMenuItem: {
-    backgroundColor: 'rgba(229, 57, 53, 0.1)',
-  },
-  menuItemText: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  drawerFooter: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-  },
-  logoutButton: {
-    borderWidth: 1,
-    borderRadius: 6,
-  },
-
   // Header principal
   header: {
     flexDirection: 'row',
@@ -854,6 +985,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginRight: 12,
   },
+  buttonsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterButton: {
+    borderWidth: 1,
+    borderRadius: 6,
+  },
   addButton: {
     borderRadius: 6,
   },
@@ -866,9 +1005,10 @@ const styles = StyleSheet.create({
   tableHeaderCell: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -901,9 +1041,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    minWidth: 60,
+    minWidth: 80,
   },
   cargoText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 60,
+  },
+  statusText: {
     fontSize: 10,
     color: '#FFFFFF',
     fontWeight: '600',
@@ -918,6 +1070,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     textAlign: 'center',
+    marginTop: 8,
   },
 
   // Informações do resultado
@@ -937,6 +1090,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
+    marginBottom: 20,
   },
   statItem: {
     alignItems: 'center',
@@ -955,6 +1109,36 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
     textAlign: 'center',
+  },
+
+  // Distribuição por cargo
+  rolesContainer: {
+    marginTop: 10,
+  },
+  roleItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  roleInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  roleColor: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  roleLabel: {
+    fontSize: 14,
+  },
+  roleCount: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 
   // Espaçamento
@@ -1012,24 +1196,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 8,
   },
-  cargosContainer: {
+  rolesOptionsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  cargoOption: {
+  roleOption: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#444',
   },
-  cargoOptionText: {
+  roleOptionText: {
     fontSize: 12,
     fontWeight: '500',
   },
-  userInfoText: {
+
+  // Informações do usuário no modal de detalhes
+  userInfoItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  userInfoLabel: {
     fontSize: 14,
-    marginBottom: 8,
+    fontWeight: '500',
+  },
+  userInfoValue: {
+    fontSize: 14,
+    textAlign: 'right',
+    flex: 1,
+    marginLeft: 16,
+  },
+  cargoBadgeInline: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 80,
+  },
+  statusBadgeInline: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 60,
   },
 });

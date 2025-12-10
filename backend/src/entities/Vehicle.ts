@@ -25,6 +25,6 @@ export class Vehicle {
   @OneToMany(() => Occurrence, occurrence => occurrence.vehicle)
   occurrences!: Occurrence[];
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }
