@@ -2,10 +2,13 @@ import {
   Entity, 
   PrimaryGeneratedColumn, 
   Column, 
+  ManyToOne,
   CreateDateColumn,
   OneToMany
 } from 'typeorm';
+
 import { Occurrence } from './Occurrence';
+import { State } from './State';
 
 @Entity('municipalities')
 export class Municipality {
@@ -15,8 +18,8 @@ export class Municipality {
   @Column()
   name!: string;
 
-  @OneToMany(() => Occurrence, occurrence => occurrence.municipality)
-  occurrences!: Occurrence[];
+  @ManyToOne(() => State, state => state.municipalities, { eager: true })
+  state!: State;
 
   @Column({ default: true })
   active!: boolean;
@@ -24,4 +27,6 @@ export class Municipality {
   @CreateDateColumn()
   createdAt!: Date;
 
+  @OneToMany(() => Occurrence, occurrence => occurrence.municipality)
+  occurrences!: Occurrence[];
 }

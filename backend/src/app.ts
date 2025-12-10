@@ -7,6 +7,8 @@ import rateLimit from 'express-rate-limit';
 import { AppDataSource } from './config/database';
 import { errorHandler } from './middlewares/error.middleware';
 import { authMiddleware } from './middlewares/auth.middleware';
+import stateRoutes from './api/routes/states.routes';
+import municipioRoutes from './api/routes/municipio.routes';
 import authRoutes from './api/routes/auth.routes';
 import occurrenceRoutes from './api/routes/occurrence.routes';
 import userRoutes from './api/routes/user.routes';
@@ -72,6 +74,10 @@ app.use(handleUploadError);
 
 // Rotas públicas
 app.use('/api/auth', authRoutes);
+
+// Rotas públicas para selects (recomendado)
+app.use('/api/estados', stateRoutes);
+app.use('/api/municipios', municipioRoutes);
 
 // Rotas protegidas
 app.use('/api/occurrences', authMiddleware, occurrenceRoutes);
