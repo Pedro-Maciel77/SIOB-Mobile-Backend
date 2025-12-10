@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   SafeAreaView,
   View,
@@ -9,80 +9,175 @@ import {
   Dimensions,
   Modal,
   Platform,
+  RefreshControl,
+  Alert,
 } from 'react-native';
-import { Text, Card, IconButton, Button, TextInput, Divider, Chip } from 'react-native-paper';
+import { Text, Card, IconButton, Button, TextInput, Divider, Chip, ActivityIndicator } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { darkTheme } from '../theme/darkTheme';
 import AnimatedDrawer from '../components/AnimatedDrawer';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { occurrenceService, Occurrence } from '../services/occurrenceService';
 
 const { width } = Dimensions.get('window');
 
-type Ocorrencia = {
-  id: string;
-  tipo: string;
-  local: string;
-  data: string; // formato dd/MM/yy ou dd/MM/yyyy
-  status: string;
+// Tipos de ocorrência baseados na API
+const TIPO_OPTIONS = ['acidente', 'resgate', 'incendio', 'atropelamento', 'outros'];
+const TIPO_LABELS: Record<string, string> = {
+  'acidente': 'Acidente',
+  'resgate': 'Resgate',
+  'incendio': 'Incêndio',
+  'atropelamento': 'Atropelamento',
+  'outros': 'Outros'
 };
 
-const EXAMPLE_DATA: Ocorrencia[] = [
-  { id: '1', tipo: 'Acidente', local: 'Olinda', data: '10/11/2025', status: 'Finalizada' },
-  { id: '2', tipo: 'Resgate', local: 'Recife', data: '13/11/2025', status: 'Aberta' },
-  { id: '3', tipo: 'Incêndio', local: 'Olinda', data: '11/11/2025', status: 'Finalizada' },
-  { id: '4', tipo: 'Inundação', local: 'São Lourenço da Mata', data: '10/11/2025', status: 'Finalizada' },
-];
-
-const STATUS_OPTIONS = ['Aberta', 'Em Andamento', 'Finalizada', 'Cancelada'];
-const TIPOS = ['Acidente', 'Incêndio', 'Resgate', 'Desastre Natural', 'Outros'];
+// Status baseados na API
+const STATUS_OPTIONS = ['aberto', 'em_andamento', 'finalizado', 'alerta'];
+const STATUS_LABELS: Record<string, string> = {
+  'aberto': 'Aberto',
+  'em_andamento': 'Em Andamento',
+  'finalizado': 'Finalizado',
+  'alerta': 'Alerta'
+};
 
 export default function Ocorrencias({ navigation }: any) {
   const drawerRef = useRef<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
+  const [filteredOccurrences, setFilteredOccurrences] = useState<Occurrence[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  // filtros
+  // Filtros
   const [filtroMunicipio, setFiltroMunicipio] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<string | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string | null>(null);
-
-  // periodo
   const [periodoStart, setPeriodoStart] = useState<Date | null>(null);
   const [periodoEnd, setPeriodoEnd] = useState<Date | null>(null);
-  const [periodoModalVisible, setPeriodoModalVisible] = useState(false);
   const [periodoTexto, setPeriodoTexto] = useState<string>('Período');
 
-  // datepicker control
+  // Modais
+  const [periodoModalVisible, setPeriodoModalVisible] = useState(false);
+  const [modalStatusVisible, setModalStatusVisible] = useState(false);
+  const [modalTipoVisible, setModalTipoVisible] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end' | null>(null);
 
-  // modais de seleção
-  const [modalStatusVisible, setModalStatusVisible] = useState(false);
-  const [modalTipoVisible, setModalTipoVisible] = useState(false);
+  // Detalhe
+  const [selectedOccurrence, setSelectedOccurrence] = useState<Occurrence | null>(null);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
 
-  // detalhe
-  const [selected, setSelected] = useState<Ocorrencia | null>(null);
+  // Carregar ocorrências
+  const loadOccurrences = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-  // util: parse dd/MM/yy or dd/MM/yyyy
-  const parseDateString = (s: string) => {
-    const parts = s.split('/');
-    if (parts.length < 3) return null;
-    const d = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) - 1;
-    let y = parseInt(parts[2], 10);
-    if (parts[2].length === 2) y += 2000;
-    return new Date(y, m, d);
-  };
+      // Aqui você precisaria implementar uma função no occurrenceService
+      // para buscar ocorrências com filtros
+      // Por enquanto, vou mostrar como implementar
+      
+      // Exemplo: Buscar todas as ocorrências
+      // const filters = {
+      //   municipality: filtroMunicipio || undefined,
+      //   status: filtroStatus || undefined,
+      //   type: filtroTipo || undefined,
+      //   startDate: periodoStart || undefined,
+      //   endDate: periodoEnd || undefined,
+      //   page: 1,
+      //   limit: 50
+      // };
+      
+      // const result = await occurrenceService.getOccurrences(filters);
+      // setOccurrences(result.occurrences);
+      // setFilteredOccurrences(result.occurrences);
 
-  const formatShort = (d: Date) => {
-    const dd = `${d.getDate()}`.padStart(2, '0');
-    const mm = `${d.getMonth() + 1}`.padStart(2, '0');
-    const yyyy = d.getFullYear();
+      // Dados de exemplo enquanto não tem a API
+      const mockOccurrences: Occurrence[] = [
+        {
+          id: '1',
+          type: 'acidente',
+          municipality: 'Olinda',
+          address: 'Rua Ribeirão, Ouro Preto',
+          occurrenceDate: '2025-12-10T21:53:56.909Z',
+          activationDate: '2025-12-10T21:53:56.909Z',
+          status: 'finalizado',
+          description: 'Acidente de trânsito',
+          createdBy: {
+            id: '69be69a7-df2e-4b3f-a0ea-a5bea768ba09',
+            name: 'Pedro Henrique',
+            email: 'pedro@siob.com'
+          },
+          images: [],
+          createdAt: '2025-12-10T21:53:56.909Z',
+          updatedAt: '2025-12-10T21:53:56.909Z'
+        },
+        {
+          id: '2',
+          type: 'incendio',
+          municipality: 'Recife',
+          address: 'Avenida Boa Viagem, 123',
+          occurrenceDate: '2025-12-11T14:30:00.000Z',
+          activationDate: '2025-12-11T14:35:00.000Z',
+          status: 'em_andamento',
+          description: 'Incêndio em prédio comercial',
+          createdBy: {
+            id: '69be69a7-df2e-4b3f-a0ea-a5bea768ba09',
+            name: 'Pedro Henrique',
+            email: 'pedro@siob.com'
+          },
+          images: [],
+          createdAt: '2025-12-11T14:30:00.000Z',
+          updatedAt: '2025-12-11T14:30:00.000Z'
+        }
+      ];
+
+      setOccurrences(mockOccurrences);
+      setFilteredOccurrences(mockOccurrences);
+      
+    } catch (error: any) {
+      console.error('Erro ao carregar ocorrências:', error);
+      setError('Não foi possível carregar as ocorrências');
+      Alert.alert('Erro', 'Não foi possível carregar as ocorrências.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [filtroMunicipio, filtroStatus, filtroTipo, periodoStart, periodoEnd]);
+
+  useEffect(() => {
+    loadOccurrences();
+  }, [loadOccurrences]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadOccurrences();
+  }, [loadOccurrences]);
+
+  // Funções para datas
+  const formatShort = (dateString: string) => {
+    const date = new Date(dateString);
+    const dd = `${date.getDate()}`.padStart(2, '0');
+    const mm = `${date.getMonth() + 1}`.padStart(2, '0');
+    const yyyy = date.getFullYear();
     return `${dd}/${mm}/${yyyy}`;
   };
 
-  // aplicar e formatar período
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const dd = `${date.getDate()}`.padStart(2, '0');
+    const mm = `${date.getMonth() + 1}`.padStart(2, '0');
+    const yyyy = date.getFullYear();
+    const hh = `${date.getHours()}`.padStart(2, '0');
+    const min = `${date.getMinutes()}`.padStart(2, '0');
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+  };
+
+  // Aplicar período
   const applyPeriodo = () => {
     if (periodoStart && periodoEnd) {
-      // se invertido, troca
+      // Garantir que start <= end
       let start = periodoStart;
       let end = periodoEnd;
       if (start.getTime() > end.getTime()) {
@@ -92,15 +187,24 @@ export default function Ocorrencias({ navigation }: any) {
       }
       setPeriodoStart(start);
       setPeriodoEnd(end);
-      setPeriodoTexto(`${formatShort(start)} - ${formatShort(end)}`);
+      
+      const formatDate = (d: Date) => {
+        const dd = `${d.getDate()}`.padStart(2, '0');
+        const mm = `${d.getMonth() + 1}`.padStart(2, '0');
+        const yyyy = d.getFullYear();
+        return `${dd}/${mm}/${yyyy}`;
+      };
+      
+      setPeriodoTexto(`${formatDate(start)} - ${formatDate(end)}`);
     } else if (periodoStart && !periodoEnd) {
-      setPeriodoTexto(`${formatShort(periodoStart)} - ...`);
+      setPeriodoTexto(`A partir de ${formatShort(periodoStart.toISOString())}`);
     } else if (!periodoStart && periodoEnd) {
-      setPeriodoTexto(`... - ${formatShort(periodoEnd)}`);
+      setPeriodoTexto(`Até ${formatShort(periodoEnd.toISOString())}`);
     } else {
       setPeriodoTexto('Período');
     }
     setPeriodoModalVisible(false);
+    loadOccurrences(); // Recarrega com novos filtros
   };
 
   const clearFilters = () => {
@@ -110,31 +214,23 @@ export default function Ocorrencias({ navigation }: any) {
     setPeriodoStart(null);
     setPeriodoEnd(null);
     setPeriodoTexto('Período');
+    loadOccurrences();
   };
 
-  const filtered = EXAMPLE_DATA.filter((o) => {
-    if (filtroMunicipio && !o.local.toLowerCase().includes(filtroMunicipio.toLowerCase())) return false;
-    if (filtroStatus && o.status !== filtroStatus) return false;
-    if (filtroTipo && o.tipo !== filtroTipo) return false;
-
-    if (periodoStart || periodoEnd) {
-      const d = parseDateString(o.data);
-      if (!d) return false;
-      // normalizar início do dia / fim do dia para comparação inclusiva
-      if (periodoStart) {
-        const s = new Date(periodoStart);
-        s.setHours(0, 0, 0, 0);
-        if (d < s) return false;
-      }
-      if (periodoEnd) {
-        const e = new Date(periodoEnd);
-        e.setHours(23, 59, 59, 999);
-        if (d > e) return false;
-      }
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'aberto':
+        return '#FFA726';
+      case 'em_andamento':
+        return '#29B6F6';
+      case 'finalizado':
+        return '#66BB6A';
+      case 'alerta':
+        return '#EF5350';
+      default:
+        return darkTheme.colors.onSurface;
     }
-
-    return true;
-  });
+  };
 
   const renderHeader = () => (
     <View style={[styles.header, { backgroundColor: darkTheme.colors.surface, borderBottomColor: darkTheme.colors.outline }]}>
@@ -148,52 +244,77 @@ export default function Ocorrencias({ navigation }: any) {
     </View>
   );
 
- const renderTableHeader = () => (
-  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-    <View style={styles.tableHeader}>
-      <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 120 }]}>Tipo</Text>
-      <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 160 }]}>Local</Text>
-      <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>Data</Text>
-      <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>Status</Text>
-    </View>
-  </ScrollView>
-);
-
-  const renderItem = ({ item }: { item: Ocorrencia }) => (
-  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-    <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
-      <Text style={[styles.tableCell, { color: darkTheme.colors.onSurface, width: 120 }]}>{item.tipo}</Text>
-      <Text style={[styles.tableCell, { color: darkTheme.colors.onSurfaceVariant, width: 160 }]}>{item.local}</Text>
-      <Text style={[styles.tableCell, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>{item.data}</Text>
-      <View style={{ width: 100, alignItems: 'flex-start' }}>
-        <Chip
-          compact
-          style={[
-            styles.statusChip,
-            {
-              backgroundColor: getStatusColor(item.status) + '22',
-              borderColor: getStatusColor(item.status),
-            },
-          ]}
-          textStyle={{ color: getStatusColor(item.status) }}
-          onPress={() => {
-            setFiltroStatus(item.status);
-          }}
-        >
-          {item.status}
-        </Chip>
+  const renderTableHeader = () => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 120 }]}>Tipo</Text>
+        <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 160 }]}>Local</Text>
+        <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>Data</Text>
+        <Text style={[styles.tableHeaderText, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>Status</Text>
       </View>
-      {/* Ícone de detalhes */}
-      <TouchableOpacity
-        style={{ paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' }}
-        onPress={() => setSelected(item)}
-        activeOpacity={0.7}
-      >
-        <Ionicons name="eye-outline" size={22} color={darkTheme.colors.primary} />
-      </TouchableOpacity>
-    </View>
-  </ScrollView>
-);
+    </ScrollView>
+  );
+
+  const renderItem = ({ item }: { item: Occurrence }) => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={[styles.tableRow, { backgroundColor: darkTheme.colors.surface }]}>
+        <Text style={[styles.tableCell, { color: darkTheme.colors.onSurface, width: 120 }]}>
+          {TIPO_LABELS[item.type] || item.type}
+        </Text>
+        <Text style={[styles.tableCell, { color: darkTheme.colors.onSurfaceVariant, width: 160 }]}>
+          {item.municipality}
+          {item.neighborhood ? ` - ${item.neighborhood}` : ''}
+        </Text>
+        <Text style={[styles.tableCell, { color: darkTheme.colors.onSurfaceVariant, width: 100 }]}>
+          {formatShort(item.occurrenceDate)}
+        </Text>
+        <View style={{ width: 100, alignItems: 'flex-start' }}>
+          <Chip
+            compact
+            style={[
+              styles.statusChip,
+              {
+                backgroundColor: getStatusColor(item.status) + '22',
+                borderColor: getStatusColor(item.status),
+              },
+            ]}
+            textStyle={{ color: getStatusColor(item.status), fontSize: 11 }}
+            onPress={() => {
+              setFiltroStatus(item.status);
+              loadOccurrences();
+            }}
+          >
+            {STATUS_LABELS[item.status] || item.status}
+          </Chip>
+        </View>
+        <TouchableOpacity
+          style={{ paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' }}
+          onPress={() => {
+            setSelectedOccurrence(item);
+            setDetailModalVisible(true);
+          }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="eye-outline" size={22} color={darkTheme.colors.primary} />
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
+        <AnimatedDrawer ref={drawerRef} />
+        {renderHeader()}
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={darkTheme.colors.primary} />
+          <Text style={{ marginTop: 16, color: darkTheme.colors.onSurface }}>
+            Carregando ocorrências...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
@@ -201,24 +322,56 @@ export default function Ocorrencias({ navigation }: any) {
 
       {renderHeader()}
 
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <ScrollView 
+        contentContainerStyle={{ padding: 16 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[darkTheme.colors.primary]}
+            tintColor={darkTheme.colors.primary}
+          />
+        }
+      >
+        {error && (
+          <Card style={[styles.errorCard, { backgroundColor: '#FFE5E5', borderColor: '#FF5252' }]}>
+            <Card.Content style={styles.errorContent}>
+              <Ionicons name="warning" size={24} color="#FF5252" />
+              <Text style={[styles.errorText, { color: '#D32F2F' }]}>
+                {error}
+              </Text>
+            </Card.Content>
+          </Card>
+        )}
+
         <Card style={[styles.card, { backgroundColor: darkTheme.colors.surface, borderColor: darkTheme.colors.outline }]}>
           <Card.Content>
             <Text style={[styles.legendTitle, { color: darkTheme.colors.onSurface }]}>
-              Toque na ocorrência desejada para ver mais informações
+              Toque na ocorrência para ver mais detalhes
             </Text>
 
             <Divider style={{ marginVertical: 12, backgroundColor: darkTheme.colors.outline }} />
 
-            {renderTableHeader()}
-
-            <FlatList
-              data={filtered}
-              renderItem={renderItem}
-              keyExtractor={(i) => i.id}
-              ItemSeparatorComponent={() => <Divider style={{ backgroundColor: darkTheme.colors.outline, marginVertical: 6 }} />}
-              style={{ marginTop: 8 }}
-            />
+            {filteredOccurrences.length === 0 && !loading ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="document-text-outline" size={48} color={darkTheme.colors.onSurfaceVariant} />
+                <Text style={[styles.emptyStateText, { color: darkTheme.colors.onSurfaceVariant }]}>
+                  Nenhuma ocorrência encontrada
+                </Text>
+              </View>
+            ) : (
+              <>
+                {renderTableHeader()}
+                <FlatList
+                  data={filteredOccurrences}
+                  renderItem={renderItem}
+                  keyExtractor={(item) => item.id}
+                  ItemSeparatorComponent={() => <Divider style={{ backgroundColor: darkTheme.colors.outline, marginVertical: 6 }} />}
+                  style={{ marginTop: 8, maxHeight: 400 }}
+                  scrollEnabled={false}
+                />
+              </>
+            )}
           </Card.Content>
         </Card>
 
@@ -245,21 +398,21 @@ export default function Ocorrencias({ navigation }: any) {
             <View style={styles.filtersRow}>
               <TouchableOpacity style={[styles.smallSelect, { borderColor: darkTheme.colors.outline }]} onPress={() => setModalStatusVisible(true)}>
                 <Text style={{ color: filtroStatus ? darkTheme.colors.onSurface : darkTheme.colors.onSurfaceVariant }}>
-                  {filtroStatus || 'Status'}
+                  {filtroStatus ? STATUS_LABELS[filtroStatus] : 'Status'}
                 </Text>
                 <IconButton icon="chevron-down" size={20} iconColor={darkTheme.colors.onSurfaceVariant} />
               </TouchableOpacity>
 
               <TouchableOpacity style={[styles.smallSelect, { borderColor: darkTheme.colors.outline }]} onPress={() => setModalTipoVisible(true)}>
                 <Text style={{ color: filtroTipo ? darkTheme.colors.onSurface : darkTheme.colors.onSurfaceVariant }}>
-                  {filtroTipo || 'Tipo'}
+                  {filtroTipo ? TIPO_LABELS[filtroTipo] : 'Tipo'}
                 </Text>
                 <IconButton icon="chevron-down" size={20} iconColor={darkTheme.colors.onSurfaceVariant} />
               </TouchableOpacity>
 
               <TouchableOpacity style={[styles.periodBox, { borderColor: darkTheme.colors.outline }]} onPress={() => setPeriodoModalVisible(true)}>
                 <Ionicons name="calendar-outline" size={20} color={darkTheme.colors.onSurfaceVariant} />
-                <Text style={{ color: darkTheme.colors.onSurfaceVariant, marginLeft: 8 }}>{periodoTexto}</Text>
+                <Text style={{ color: darkTheme.colors.onSurfaceVariant, marginLeft: 8, fontSize: 12 }}>{periodoTexto}</Text>
               </TouchableOpacity>
             </View>
 
@@ -267,15 +420,13 @@ export default function Ocorrencias({ navigation }: any) {
               <Button mode="outlined" onPress={clearFilters} style={styles.clearButton} labelStyle={{ color: darkTheme.colors.onSurface }}>
                 Limpar filtros
               </Button>
-              {/* espaço direito reservado caso precise adicionar outro botão */}
-              <View style={{ width: 8 }} />
               <Button
                 mode="contained"
-                onPress={() => {
-                  // ação de aplicar já é automática — aqui só fecha teclado ou faz nada
-                }}
+                onPress={loadOccurrences}
                 style={styles.applyButton}
                 labelStyle={{ color: '#fff' }}
+                loading={loading}
+                disabled={loading}
               >
                 Aplicar
               </Button>
@@ -296,8 +447,12 @@ export default function Ocorrencias({ navigation }: any) {
               data={STATUS_OPTIONS}
               keyExtractor={(s) => s}
               renderItem={({ item }) => (
-                <TouchableOpacity onPress={() => { setFiltroStatus(item); setModalStatusVisible(false); }} style={styles.modalItem}>
-                  <Text style={{ color: darkTheme.colors.onSurface }}>{item}</Text>
+                <TouchableOpacity onPress={() => { 
+                  setFiltroStatus(item); 
+                  setModalStatusVisible(false);
+                  loadOccurrences();
+                }} style={styles.modalItem}>
+                  <Text style={{ color: darkTheme.colors.onSurface }}>{STATUS_LABELS[item]}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -314,11 +469,15 @@ export default function Ocorrencias({ navigation }: any) {
               <IconButton icon="close" size={20} iconColor={darkTheme.colors.onSurface} onPress={() => setModalTipoVisible(false)} />
             </View>
             <FlatList
-              data={TIPOS}
+              data={TIPO_OPTIONS}
               keyExtractor={(s) => s}
               renderItem={({ item }) => (
-                <TouchableOpacity onPress={() => { setFiltroTipo(item); setModalTipoVisible(false); }} style={styles.modalItem}>
-                  <Text style={{ color: darkTheme.colors.onSurface }}>{item}</Text>
+                <TouchableOpacity onPress={() => { 
+                  setFiltroTipo(item); 
+                  setModalTipoVisible(false);
+                  loadOccurrences();
+                }} style={styles.modalItem}>
+                  <Text style={{ color: darkTheme.colors.onSurface }}>{TIPO_LABELS[item]}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -345,7 +504,7 @@ export default function Ocorrencias({ navigation }: any) {
                 }}
               >
                 <Text style={{ color: periodoStart ? darkTheme.colors.onSurface : darkTheme.colors.onSurfaceVariant }}>
-                  {periodoStart ? formatShort(periodoStart) : 'Selecionar data inicial'}
+                  {periodoStart ? periodoStart.toLocaleDateString('pt-BR') : 'Selecionar data inicial'}
                 </Text>
                 <IconButton icon="calendar" size={20} iconColor={darkTheme.colors.onSurfaceVariant} />
               </TouchableOpacity>
@@ -359,13 +518,17 @@ export default function Ocorrencias({ navigation }: any) {
                 }}
               >
                 <Text style={{ color: periodoEnd ? darkTheme.colors.onSurface : darkTheme.colors.onSurfaceVariant }}>
-                  {periodoEnd ? formatShort(periodoEnd) : 'Selecionar data final'}
+                  {periodoEnd ? periodoEnd.toLocaleDateString('pt-BR') : 'Selecionar data final'}
                 </Text>
                 <IconButton icon="calendar" size={20} iconColor={darkTheme.colors.onSurfaceVariant} />
               </TouchableOpacity>
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
-                <Button mode="outlined" onPress={() => { setPeriodoStart(null); setPeriodoEnd(null); setPeriodoTexto('Período'); }} labelStyle={{ color: darkTheme.colors.onSurface }}>
+                <Button mode="outlined" onPress={() => { 
+                  setPeriodoStart(null); 
+                  setPeriodoEnd(null); 
+                  setPeriodoTexto('Período'); 
+                }} labelStyle={{ color: darkTheme.colors.onSurface }}>
                   Limpar
                 </Button>
                 <Button mode="contained" onPress={applyPeriodo} labelStyle={{ color: '#fff' }}>
@@ -377,14 +540,13 @@ export default function Ocorrencias({ navigation }: any) {
         </View>
       </Modal>
 
-      {/* DateTimePicker (rendered outside modals for Android/iOS compatibility) */}
+      {/* DateTimePicker */}
       {showDatePicker && (
         <DateTimePicker
           value={pickerTarget === 'start' ? (periodoStart || new Date()) : (periodoEnd || new Date())}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
           onChange={(event: any, selectedDate?: Date) => {
-            // on Android, event.type === 'dismissed' when canceled
             setShowDatePicker(false);
             if (selectedDate) {
               if (pickerTarget === 'start') {
@@ -399,51 +561,140 @@ export default function Ocorrencias({ navigation }: any) {
       )}
 
       {/* Modal detalhe ocorrência */}
-      <Modal visible={!!selected} animationType="slide" transparent onRequestClose={() => setSelected(null)}>
+      <Modal visible={detailModalVisible} animationType="slide" transparent onRequestClose={() => setDetailModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.detailModal, { backgroundColor: darkTheme.colors.surface }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>Detalhes</Text>
-              <IconButton icon="close" size={20} iconColor={darkTheme.colors.onSurface} onPress={() => setSelected(null)} />
+              <Text style={[styles.modalTitle, { color: darkTheme.colors.onSurface }]}>Detalhes da Ocorrência</Text>
+              <IconButton icon="close" size={20} iconColor={darkTheme.colors.onSurface} onPress={() => setDetailModalVisible(false)} />
             </View>
 
-            {selected && (
-              <View style={{ paddingHorizontal: 12, paddingBottom: 16 }}>
-                <Text style={{ color: darkTheme.colors.primary, fontWeight: '700', marginBottom: 8 }}>{selected.tipo}</Text>
-                <Text style={{ color: darkTheme.colors.onSurfaceVariant }}>Local</Text>
-                <Text style={{ color: darkTheme.colors.onSurface, marginBottom: 8 }}>{selected.local}</Text>
+            {selectedOccurrence && (
+              <ScrollView style={{ paddingHorizontal: 16, paddingBottom: 20 }}>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Tipo</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {TIPO_LABELS[selectedOccurrence.type] || selectedOccurrence.type}
+                  </Text>
+                </View>
 
-                <Text style={{ color: darkTheme.colors.onSurfaceVariant }}>Data</Text>
-                <Text style={{ color: darkTheme.colors.onSurface, marginBottom: 8 }}>{selected.data}</Text>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Município</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {selectedOccurrence.municipality}
+                  </Text>
+                </View>
 
-                <Text style={{ color: darkTheme.colors.onSurfaceVariant }}>Status</Text>
-                <Text style={{ color: darkTheme.colors.onSurface, marginBottom: 12 }}>{selected.status}</Text>
+                {selectedOccurrence.neighborhood && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Bairro</Text>
+                    <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                      {selectedOccurrence.neighborhood}
+                    </Text>
+                  </View>
+                )}
 
-                <Button mode="contained" onPress={() => { setSelected(null); }} style={{ backgroundColor: darkTheme.colors.primary }}>
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Endereço</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {selectedOccurrence.address}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Data da Ocorrência</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {formatDateTime(selectedOccurrence.occurrenceDate)}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Data de Ativação</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {formatDateTime(selectedOccurrence.activationDate)}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Status</Text>
+                  <Chip
+                    compact
+                    style={[
+                      styles.detailChip,
+                      {
+                        backgroundColor: getStatusColor(selectedOccurrence.status) + '22',
+                        borderColor: getStatusColor(selectedOccurrence.status),
+                      },
+                    ]}
+                    textStyle={{ color: getStatusColor(selectedOccurrence.status) }}
+                  >
+                    {STATUS_LABELS[selectedOccurrence.status] || selectedOccurrence.status}
+                  </Chip>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Descrição</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {selectedOccurrence.description}
+                  </Text>
+                </View>
+
+                {selectedOccurrence.victimName && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Vítima</Text>
+                    <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                      {selectedOccurrence.victimName}
+                      {selectedOccurrence.victimContact ? ` - ${selectedOccurrence.victimContact}` : ''}
+                    </Text>
+                  </View>
+                )}
+
+                {selectedOccurrence.vehicleNumber && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Viatura</Text>
+                    <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                      {selectedOccurrence.vehicleNumber}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Registrado por</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {selectedOccurrence.createdBy?.name || 'Sistema'}
+                  </Text>
+                </View>
+
+                <View style={styles.detailSection}>
+                  <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Data de criação</Text>
+                  <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                    {formatDateTime(selectedOccurrence.createdAt)}
+                  </Text>
+                </View>
+
+                {selectedOccurrence.images && selectedOccurrence.images.length > 0 && (
+                  <View style={styles.detailSection}>
+                    <Text style={[styles.detailLabel, { color: darkTheme.colors.onSurfaceVariant }]}>Imagens</Text>
+                    <Text style={[styles.detailValue, { color: darkTheme.colors.onSurface }]}>
+                      {selectedOccurrence.images.length} imagem(ns)
+                    </Text>
+                  </View>
+                )}
+
+                <Button 
+                  mode="contained" 
+                  onPress={() => setDetailModalVisible(false)}
+                  style={{ marginTop: 20, backgroundColor: darkTheme.colors.primary }}
+                >
                   Fechar
                 </Button>
-              </View>
+              </ScrollView>
             )}
           </View>
         </View>
       </Modal>
     </SafeAreaView>
   );
-}
-
-function getStatusColor(status: string) {
-  switch (status) {
-    case 'Aberta':
-      return '#FFA726';
-    case 'Em Andamento':
-      return '#29B6F6';
-    case 'Finalizada':
-      return '#66BB6A';
-    case 'Cancelada':
-      return '#EF5350';
-    default:
-      return darkTheme.colors.onSurface;
-  }
 }
 
 const styles = StyleSheet.create({
@@ -463,11 +714,40 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   card: {
     borderRadius: 12,
     elevation: 0,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  errorCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  errorContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  errorText: {
+    marginLeft: 12,
+    fontSize: 14,
+    flex: 1,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyStateText: {
+    marginTop: 12,
+    fontSize: 14,
+    textAlign: 'center',
   },
   legendTitle: {
     fontSize: 13,
@@ -538,18 +818,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     width: (width - 64) / 3,
   },
-  moreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: darkTheme.colors.outline,
-    backgroundColor: darkTheme.colors.surface,
-  },
-
-  // modais
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -560,6 +828,12 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     maxHeight: 420,
+  },
+  detailModal: {
+    paddingTop: 6,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -588,23 +862,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-
-  // detalhe
-  detailModal: {
-    paddingTop: 6,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: 320,
+  detailSection: {
+    marginBottom: 16,
   },
-
+  detailLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  detailValue: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  detailChip: {
+    alignSelf: 'flex-start',
+    height: 28,
+    borderWidth: 1,
+  },
   clearButton: {
     borderColor: darkTheme.colors.outline,
   },
   applyButton: {
     backgroundColor: darkTheme.colors.primary,
-  },
-
-  spacing: {
-    height: 16,
   },
 });

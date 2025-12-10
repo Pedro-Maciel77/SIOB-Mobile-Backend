@@ -1,3 +1,4 @@
+// /workspaces/SIOB-Mobile/backend/src/api/routes/municipio.routes.ts
 import { Router } from "express";
 import {
   getMunicipios,
@@ -9,10 +10,10 @@ import {
 
 const router = Router();
 
-router.get("/municipios", getMunicipios);
-router.get("/municipios/:id", getMunicipioById);
-router.post("/municipios", createMunicipio);
-router.put("/municipios/:id", updateMunicipio);
-router.delete("/municipios/:id", deleteMunicipio);
+router.get("/", getMunicipios);
+router.get("/:id", getMunicipioById);
+router.post("/", createMunicipio);
+router.put("/:id", updateMunicipio);
+router.delete("/:id", deleteMunicipio);
 
 export default router;

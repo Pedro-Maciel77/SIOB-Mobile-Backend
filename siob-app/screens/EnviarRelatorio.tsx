@@ -8,19 +8,18 @@ import {
   Platform,
   TouchableOpacity,
   Dimensions,
-  SafeAreaView,
-  Modal,
-  FlatList,
   ActivityIndicator,
 } from 'react-native';
-import { Text, TextInput, Button, Card, Divider, IconButton, Menu } from 'react-native-paper';
+import { Text, TextInput, Button, Card, IconButton, Menu } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // ← ADICIONADO
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { darkTheme } from '../theme/darkTheme';
 import AnimatedDrawer from '../components/AnimatedDrawer';
 import { occurrenceService, CreateOccurrenceData } from '../services/occurrenceService';
 import { statsService } from '../services/statsService';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -48,11 +47,13 @@ export default function EnviarRelatorio({ navigation, route }: any) {
   const [loading, setLoading] = useState(false);
   const [municipios, setMunicipios] = useState<Array<{id: number; name: string}>>([]);
   const [viaturas, setViaturas] = useState<Array<{id: string; plate: string; name: string}>>([]);
+  const [userId, setUserId] = useState<string | null>(null); // ← ADICIONADO: Armazena ID do usuário
   
   // Dados principais
   const [tipoOcorrencia, setTipoOcorrencia] = useState<string>('acidente');
   const [status, setStatus] = useState<string>('aberto');
   const [municipio, setMunicipio] = useState<string>('');
+  const [municipioInput, setMunicipioInput] = useState<string>('');
   const [bairro, setBairro] = useState<string>('');
   const [endereco, setEndereco] = useState<string>('');
   const [descricao, setDescricao] = useState<string>('');
@@ -65,7 +66,6 @@ export default function EnviarRelatorio({ navigation, route }: any) {
   const [dataOcorrencia, setDataOcorrencia] = useState(new Date());
   const [dataAtivacao, setDataAtivacao] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
   const [pickingOccurrenceDate, setPickingOccurrenceDate] = useState(true);
 
   // Localização
@@ -81,20 +81,58 @@ export default function EnviarRelatorio({ navigation, route }: any) {
   const [imagens, setImagens] = useState<string[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
 
+  // Autocomplete Municípios
+  const [suggestions, setSuggestions] = useState<Array<{id: number; name: string}>>([]);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
+  const [selectedMunicipioId, setSelectedMunicipioId] = useState<number | null>(null);
+  const [loadingSuggestions, setLoadingSuggestions] = useState<boolean>(false);
+
   // Modais
-  const [menuMunicipioVisible, setMenuMunicipioVisible] = useState(false);
   const [menuViaturaVisible, setMenuViaturaVisible] = useState(false);
+  const [menuStatusVisible, setMenuStatusVisible] = useState(false);
 
   // Carregar dados iniciais
   useEffect(() => {
     carregarDadosIniciais();
     solicitarPermissoes();
+    obterUsuarioLogado(); // ← ADICIONADO: Busca o usuário ao carregar
   }, []);
+
+  const obterUsuarioLogado = async () => {
+    try {
+      console.log('🔍 Buscando usuário no AsyncStorage...');
+      
+      // Tenta buscar pela chave correta @SIOB:user
+      const userData = await AsyncStorage.getItem('@SIOB:user');
+      
+      if (userData) {
+        const user = JSON.parse(userData);
+        console.log('✅ Usuário encontrado! ID:', user.id);
+        console.log('Nome:', user.name);
+        console.log('Email:', user.email);
+        setUserId(user.id);
+      } else {
+        console.log('❌ Chave @SIOB:user não encontrada');
+        
+        // Para debug, mostra todas as chaves
+        const allKeys = await AsyncStorage.getAllKeys();
+        console.log('Todas as chaves no AsyncStorage:', allKeys);
+        
+        // Tenta buscar em cada chave
+        for (const key of allKeys) {
+          const value = await AsyncStorage.getItem(key);
+          console.log(`📝 Chave "${key}":`, value?.substring(0, 100) + '...');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Erro ao obter usuário:', error);
+    }
+  };
 
   const carregarDadosIniciais = async () => {
     try {
-      // Carrega municípios do backend
-      const municipiosData = await occurrenceService.getMunicipalities();
+      // Carrega municípios de PE do backend
+      const municipiosData = await occurrenceService.getMunicipalitiesPE();
       setMunicipios(municipiosData);
 
       // Carrega viaturas
@@ -104,10 +142,20 @@ export default function EnviarRelatorio({ navigation, route }: any) {
       // Tenta preencher com o primeiro município se disponível
       if (municipiosData.length > 0) {
         setMunicipio(municipiosData[0].name);
+        setMunicipioInput(municipiosData[0].name);
+        setSelectedMunicipioId(municipiosData[0].id);
       }
 
     } catch (error) {
       console.warn('Erro ao carregar dados iniciais:', error);
+      
+      // Fallback: lista básica de municípios de PE
+      const fallbackMunicipios = [
+        { id: 1, name: 'Recife' },
+        { id: 2, name: 'Olinda' },
+        { id: 3, name: 'Jaboatão dos Guararapes' },
+      ];
+      setMunicipios(fallbackMunicipios);
     }
   };
 
@@ -128,10 +176,6 @@ export default function EnviarRelatorio({ navigation, route }: any) {
   // Formatação
   const formatarData = (date: Date) => {
     return date.toLocaleDateString('pt-BR');
-  };
-
-  const formatarHora = (date: Date) => {
-    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   };
 
   // Localização
@@ -171,6 +215,7 @@ export default function EnviarRelatorio({ navigation, route }: any) {
           // Tenta preencher município automaticamente
           if (addr.city) {
             setMunicipio(addr.city);
+            setMunicipioInput(addr.city);
           }
           if (addr.district) {
             setBairro(addr.district);
@@ -211,7 +256,43 @@ export default function EnviarRelatorio({ navigation, route }: any) {
     setImagens(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Envio
+  // Autocomplete Municípios
+  const buscarSugestoes = async (text: string) => {
+    if (text.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    
+    try {
+      setLoadingSuggestions(true);
+      const results = await occurrenceService.searchMunicipalitiesPE(text);
+      setSuggestions(results);
+      setShowSuggestions(results.length > 0);
+    } catch (error) {
+      console.warn('Erro ao buscar sugestões:', error);
+      setSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleMunicipioChange = (text: string) => {
+    setMunicipioInput(text);
+    setMunicipio(text);
+    setSelectedMunicipioId(null);
+    buscarSugestoes(text);
+  };
+
+  const handleSelectSuggestion = (suggestion: {id: number; name: string}) => {
+    setMunicipioInput(suggestion.name);
+    setMunicipio(suggestion.name);
+    setSelectedMunicipioId(suggestion.id);
+    setShowSuggestions(false);
+    setSuggestions([]);
+  };
+
+  // Validação e envio
   const validarFormulario = (): boolean => {
     const camposObrigatorios = [
       { valor: tipoOcorrencia, campo: 'Tipo de ocorrência' },
@@ -232,110 +313,148 @@ export default function EnviarRelatorio({ navigation, route }: any) {
       return false;
     }
 
+    // ← ADICIONADO: Verifica se tem usuário logado
+    if (!userId) {
+      Alert.alert(
+        'Atenção',
+        'Não foi possível identificar seu usuário. Faça login novamente.'
+      );
+      return false;
+    }
+
     return true;
   };
 
-  const enviarOcorrencia = async () => {
-    if (!validarFormulario()) return;
+  const ensureMunicipioExists = async (): Promise<boolean> => {
+    if (!municipio.trim()) {
+      Alert.alert('Atenção', 'Digite um município válido.');
+      return false;
+    }
 
-    setLoading(true);
+    // Se já tem ID selecionado, não precisa criar
+    if (selectedMunicipioId) {
+      return true;
+    }
 
     try {
-      // Prepara os dados para a API
-      const ocorrenciaData: CreateOccurrenceData = {
-        type: tipoOcorrencia as any,
-        municipality: municipio,
-        neighborhood: bairro || undefined,
-        address: endereco,
-        latitude: localizacao?.latitude,
-        longitude: localizacao?.longitude,
-        occurrenceDate: dataOcorrencia.toISOString(),
-        activationDate: dataAtivacao.toISOString(),
-        status: status as any,
-        victimName: nomeVitima || undefined,
-        victimContact: contatoVitima || undefined,
-        vehicleNumber: numeroViatura || undefined,
-        description: descricao,
-        vehicleId: viaturaId || undefined,
-      };
-
-      console.log('📤 Enviando ocorrência:', ocorrenciaData);
-
-      // 1. Cria a ocorrência
-      const ocorrenciaCriada = await occurrenceService.createOccurrence(ocorrenciaData);
-
-      // 2. Upload de imagens (se houver)
-      if (imagens.length > 0) {
-        setUploadingImages(true);
-        
-        for (const imagemUri of imagens) {
-          try {
-            await occurrenceService.uploadImage(ocorrenciaCriada.id, imagemUri);
-          } catch (uploadError) {
-            console.warn('Erro ao fazer upload de imagem:', uploadError);
-            // Continua mesmo se uma imagem falhar
-          }
-        }
-        
-        setUploadingImages(false);
+      console.log(`🔄 Garantindo que município "${municipio}" existe...`);
+      
+      const result = await occurrenceService.findOrCreateMunicipalityPE(municipio);
+      
+      if (result.wasCreated) {
+        console.log(`✅ Município criado: ${result.name}`);
+        // Adiciona à lista local
+        setMunicipios(prev => [...prev, { id: result.id, name: result.name }]);
+        // Não mostra alerta aqui para não interromper o fluxo
+      } else {
+        console.log(`✅ Município já existia: ${result.name}`);
       }
-
-      // 3. Atualiza estatísticas no dashboard
-      await statsService.getDashboardStats();
-
-      // 4. Feedback de sucesso
-      Alert.alert(
-        'Sucesso!',
-        'Ocorrência registrada com sucesso.',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
-          }
-        ]
-      );
-
+      
+      setSelectedMunicipioId(result.id);
+      return true;
+      
     } catch (error: any) {
-      console.error('❌ Erro ao enviar ocorrência:', error);
+      console.error('❌ Erro ao garantir município:', error);
       
-      let mensagemErro = 'Erro ao enviar ocorrência. Tente novamente.';
-      
-      if (error.response?.status === 400) {
-        mensagemErro = error.response.data?.message || 'Dados inválidos. Verifique os campos.';
-      } else if (error.response?.status === 401) {
-        mensagemErro = 'Sessão expirada. Faça login novamente.';
-        // Opcional: redirecionar para login
-      } else if (error.message) {
-        mensagemErro = error.message;
+      // Mostra alerta apenas em caso de erro crítico
+      if (error?.message && typeof error.message === 'string' && error.message.includes('Não foi possível')) {
+        Alert.alert(
+          'Aviso', 
+          'Município não pôde ser verificado, mas a ocorrência será enviada normalmente.'
+        );
       }
-
-      Alert.alert('Erro', mensagemErro);
-      
-    } finally {
-      setLoading(false);
+      return true; // Permite continuar mesmo sem ID
     }
   };
 
-  // Render
-  const renderMunicipioItem = ({ item }: any) => (
-    <Menu.Item
-      title={item.name}
-      onPress={() => {
-        setMunicipio(item.name);
-        setMenuMunicipioVisible(false);
-      }}
-    />
-  );
+  const enviarOcorrencia = async () => {
+  if (!validarFormulario()) return;
 
-  const renderViaturaItem = ({ item }: any) => (
-    <Menu.Item
-      title={`${item.plate} - ${item.name}`}
-      onPress={() => {
-        setViaturaId(item.id);
-        setMenuViaturaVisible(false);
-      }}
-    />
-  );
+  // 1. Primeiro garante que o município existe
+  const municipioValido = await ensureMunicipioExists();
+  if (!municipioValido) return;
+
+  setLoading(true);
+
+  try {
+    // CORREÇÃO: Use createdBy (não createdById) e remova o tipo extra
+    const ocorrenciaData: CreateOccurrenceData = {
+      type: tipoOcorrencia as any,
+      municipality: municipio,
+      neighborhood: bairro || undefined,
+      address: endereco,
+      latitude: localizacao?.latitude,
+      longitude: localizacao?.longitude,
+      occurrenceDate: dataOcorrencia.toISOString(),
+      activationDate: dataAtivacao.toISOString(),
+      status: status as any,
+      victimName: nomeVitima || undefined,
+      victimContact: contatoVitima || undefined,
+      vehicleNumber: numeroViatura || undefined,
+      description: descricao,
+      vehicleId: viaturaId || undefined,
+      createdBy: userId!, // ← CORREÇÃO: createdBy (não createdById)
+    };
+
+    console.log('📤 Enviando ocorrência:', ocorrenciaData);
+
+    // 1. Cria a ocorrência
+    const ocorrenciaCriada = await occurrenceService.createOccurrence(ocorrenciaData);
+
+    // 2. Upload de imagens (se houver)
+    if (imagens.length > 0) {
+      setUploadingImages(true);
+      
+      for (const imagemUri of imagens) {
+        try {
+          await occurrenceService.uploadImage(ocorrenciaCriada.id, imagemUri);
+        } catch (uploadError) {
+          console.warn('Erro ao fazer upload de imagem:', uploadError);
+          // Continua mesmo se uma imagem falhar
+        }
+      }
+      
+      setUploadingImages(false);
+    }
+
+    // 3. Atualiza estatísticas no dashboard
+    await statsService.getDashboardStats();
+
+    // 4. Feedback de sucesso
+    Alert.alert(
+      'Sucesso!',
+      'Ocorrência registrada com sucesso.',
+      [
+        {
+          text: 'OK',
+          onPress: () => navigation.goBack()
+        }
+      ]
+    );
+
+  } catch (error: any) {
+    console.error('❌ Erro ao enviar ocorrência:', error);
+    
+    let mensagemErro = 'Erro ao enviar ocorrência. Tente novamente.';
+    
+    if (error.response?.status === 400) {
+      if (error.response.data?.message?.includes('createdBy') || error.response.data?.message?.includes('createdById')) {
+        mensagemErro = 'Erro de autenticação. Faça login novamente.';
+      } else {
+        mensagemErro = error.response.data?.message || 'Dados inválidos. Verifique os campos.';
+      }
+    } else if (error.response?.status === 401) {
+      mensagemErro = 'Sessão expirada. Faça login novamente.';
+    } else if (error.message) {
+      mensagemErro = error.message;
+    }
+
+    Alert.alert('Erro', mensagemErro);
+    
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.colors.background }}>
@@ -396,15 +515,17 @@ export default function EnviarRelatorio({ navigation, route }: any) {
                   Status *
                 </Text>
                 <Menu
-                  visible={false} // Usaremos botão customizado
+                  visible={menuStatusVisible}
+                  onDismiss={() => setMenuStatusVisible(false)}
                   anchor={
                     <TouchableOpacity
                       style={[styles.selectButton, { borderColor: darkTheme.colors.outline }]}
-                      onPress={() => {}} // Para menu customizado
+                      onPress={() => setMenuStatusVisible(true)}
                     >
                       <Text style={{ color: darkTheme.colors.onSurface }}>
                         {STATUS_OCORRENCIA.find(s => s.id === status)?.nome || 'Selecionar'}
                       </Text>
+                      <IconButton icon="chevron-down" size={20} />
                     </TouchableOpacity>
                   }
                 >
@@ -412,7 +533,10 @@ export default function EnviarRelatorio({ navigation, route }: any) {
                     <Menu.Item
                       key={statusItem.id}
                       title={statusItem.nome}
-                      onPress={() => setStatus(statusItem.id)}
+                      onPress={() => {
+                        setStatus(statusItem.id);
+                        setMenuStatusVisible(false);
+                      }}
                     />
                   ))}
                 </Menu>
@@ -424,43 +548,89 @@ export default function EnviarRelatorio({ navigation, route }: any) {
               Localização
             </Text>
 
-            {/* Município */}
+            {/* Município - CAMPO DE DIGITAÇÃO */}
             <Text style={[styles.label, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>
-              Município *
+              Município (Pernambuco) *
             </Text>
-            <Menu
-              visible={menuMunicipioVisible}
-              onDismiss={() => setMenuMunicipioVisible(false)}
-              anchor={
-                <TouchableOpacity
-                  style={[styles.selectButton, { 
-                    borderColor: municipio ? darkTheme.colors.primary : darkTheme.colors.outline 
-                  }]}
-                  onPress={() => setMenuMunicipioVisible(true)}
-                >
-                  <Text style={{ 
-                    color: municipio ? darkTheme.colors.primary : darkTheme.colors.onSurfaceVariant 
-                  }}>
-                    {municipio || 'Selecionar município'}
-                  </Text>
-                  <IconButton icon="chevron-down" size={20} />
-                </TouchableOpacity>
-              }
-            >
-              {municipios.map((mun) => (
-                <Menu.Item
-                  key={mun.id}
-                  title={mun.name}
-                  onPress={() => {
-                    setMunicipio(mun.name);
-                    setMenuMunicipioVisible(false);
-                  }}
-                />
-              ))}
-              {municipios.length === 0 && (
-                <Menu.Item title="Carregando..." disabled />
+
+            <View style={styles.autocompleteContainer}>
+              <TextInput
+                mode="outlined"
+                placeholder="Digite o município de Pernambuco"
+                value={municipioInput}
+                onChangeText={handleMunicipioChange}
+                onFocus={() => {
+                  if (municipioInput.length >= 2 && suggestions.length > 0) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
+                style={styles.input}
+                theme={darkTheme}
+                right={
+                  loadingSuggestions ? (
+                    <ActivityIndicator size="small" />
+                  ) : municipioInput ? (
+                    <TextInput.Icon
+                      icon="close"
+                      onPress={() => {
+                        setMunicipioInput('');
+                        setMunicipio('');
+                        setSelectedMunicipioId(null);
+                        setSuggestions([]);
+                      }}
+                    />
+                  ) : (
+                    <TextInput.Icon icon="map-marker" />
+                  )
+                }
+              />
+
+              {/* Lista de sugestões */}
+              {showSuggestions && suggestions.length > 0 && (
+                <View style={styles.suggestionsContainer}>
+                  <ScrollView 
+                    style={styles.suggestionsList}
+                    nestedScrollEnabled
+                  >
+                    {suggestions.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.suggestionItem}
+                        onPress={() => handleSelectSuggestion(item)}
+                      >
+                        <Text style={styles.suggestionText}>{item.name}</Text>
+                        <IconButton 
+                          icon="arrow-top-right" 
+                          size={16} 
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
               )}
-            </Menu>
+
+              {/* Status do município */}
+              {municipioInput && !selectedMunicipioId && (
+                <View style={styles.infoBox}>
+                  <IconButton icon="information" size={16} iconColor="#FF9800" />
+                  <Text style={styles.infoText}>
+                    Município será salvo automaticamente ao enviar
+                  </Text>
+                </View>
+              )}
+              
+              {selectedMunicipioId && (
+                <View style={styles.confirmedBox}>
+                  <IconButton icon="check-circle" size={16} iconColor="#4CAF50" />
+                  <Text style={styles.confirmedText}>
+                    Município confirmado
+                  </Text>
+                </View>
+              )}
+            </View>
 
             {/* Bairro */}
             <Text style={[styles.label, { color: darkTheme.colors.onSurface, marginTop: 8 }]}>
@@ -517,7 +687,7 @@ export default function EnviarRelatorio({ navigation, route }: any) {
                     setShowDatePicker(true);
                   }}
                 >
-                  <Text>{formatarData(dataOcorrencia)}</Text>
+                  <Text style={{ color: darkTheme.colors.onSurface }}>{formatarData(dataOcorrencia)}</Text>
                   <IconButton icon="calendar" size={20} />
                 </TouchableOpacity>
               </View>
@@ -533,7 +703,7 @@ export default function EnviarRelatorio({ navigation, route }: any) {
                     setShowDatePicker(true);
                   }}
                 >
-                  <Text>{formatarData(dataAtivacao)}</Text>
+                  <Text style={{ color: darkTheme.colors.onSurface }}>{formatarData(dataAtivacao)}</Text>
                   <IconButton icon="calendar" size={20} />
                 </TouchableOpacity>
               </View>
@@ -679,7 +849,7 @@ export default function EnviarRelatorio({ navigation, route }: any) {
               mode="contained"
               onPress={enviarOcorrencia}
               loading={loading || uploadingImages}
-              disabled={loading || uploadingImages}
+              disabled={loading || uploadingImages || !userId} // ← DESABILITA SE NÃO TEM USUÁRIO
               style={{ marginTop: 24, backgroundColor: darkTheme.colors.primary }}
             >
               {loading ? 'Enviando...' : uploadingImages ? 'Enviando imagens...' : 'Registrar Ocorrência'}
@@ -819,5 +989,73 @@ const styles = StyleSheet.create({
     right: -8,
     backgroundColor: '#fff',
     borderRadius: 12,
+  },
+  // Novos estilos para autocomplete
+  autocompleteContainer: {
+    position: 'relative',
+    marginBottom: 8,
+  },
+  suggestionsContainer: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: darkTheme.colors.surface,
+    borderWidth: 1,
+    borderColor: darkTheme.colors.outline,
+    borderRadius: 8,
+    marginTop: 4,
+    maxHeight: 200,
+    elevation: 5,
+    zIndex: 1000,
+  },
+  suggestionsList: {
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: darkTheme.colors.outline,
+  },
+  suggestionText: {
+    color: darkTheme.colors.onSurface,
+    fontSize: 14,
+    flex: 1,
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#FF9800',
+  },
+  infoText: {
+    color: '#FF9800',
+    fontSize: 12,
+    marginLeft: 4,
+    flex: 1,
+  },
+  confirmedBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  confirmedText: {
+    color: '#4CAF50',
+    fontSize: 12,
+    marginLeft: 4,
+    flex: 1,
   },
 });

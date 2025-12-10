@@ -5,7 +5,8 @@ import {
   CreateDateColumn, 
   UpdateDateColumn,
   ManyToOne,
-  OneToMany
+  OneToMany,
+  JoinColumn
 } from 'typeorm';
 import { User } from './User';
 import { Vehicle } from './Vehicle';
@@ -67,6 +68,7 @@ export class Occurrence {
   description!: string;
 
   @ManyToOne(() => User, user => user.occurrences)
+  @JoinColumn({ name: 'createdBy' })  // ← ADICIONE ESTA LINHA
   createdBy!: User;
 
   @OneToMany(() => Report, report => report.occurrence)
