@@ -29,8 +29,6 @@ Organização estruturada das informações
 
 🛠️ Tecnologias Utilizadas:
 
-React / React Native
-
 JavaScript / TypeScript
 
 🎯 Objetivo:
